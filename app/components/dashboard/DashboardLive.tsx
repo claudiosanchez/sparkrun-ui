@@ -10,6 +10,7 @@ import { Button } from "@/app/components/ui/Button";
 import { WorkloadCard } from "./WorkloadCard";
 import { TwinReactorFleet } from "./TwinReactorFleet";
 import { AggregateStats } from "./AggregateStats";
+import { ClusterOverviewSection } from "./ClusterOverviewSection";
 
 function formatHostError(value: unknown): string {
   if (typeof value === "string") return value;
@@ -60,6 +61,8 @@ export function DashboardLive({
       </div>
 
       <AggregateStats />
+
+      <ClusterOverviewSection clusters={clusters} />
 
       <TwinReactorFleet
         clusters={clusters}
