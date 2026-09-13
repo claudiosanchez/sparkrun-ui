@@ -21,16 +21,24 @@ export type VllmCollectorDependencies = {
 
 type Listener = (snapshot: VllmClusterSnapshot) => void;
 
+export type VllmCollectorSubscribeOptions = {
+  onStopped?: () => void;
+  pollIntervalMs?: number;
+};
+
 export type CollectorEntry = {
   cluster: string;
   leaderHost: string;
   subscribers: Set<Listener>;
   onStopped: Map<Listener, () => void>;
+  requestedIntervals: Map<Listener, number>;
+  pollIntervalMs: number;
   baseline: CounterBaseline | null;
   lastSnapshot: VllmClusterSnapshot | null;
   controller: AbortController;
-  running: Promise<void>;
+  running: Promise<void> | null;
   idleCleanup: ReturnType<typeof setTimeout> | null;
+  wakeDelay: (() => void) | null;
 };
 
 type PollErrorKind =
@@ -224,6 +232,56 @@ async function pollEntry(
   broadcast(entry, next);
 }
 
+function minimumRequestedInterval(entry: CollectorEntry): number {
+  let interval = Number.POSITIVE_INFINITY;
+  for (const requested of entry.requestedIntervals.values())
+    interval = Math.min(interval, requested);
+  return Number.isFinite(interval) ? interval : POLL_INTERVAL_MS;
+}
+
+function normalizePollInterval(pollIntervalMs: number | undefined): number {
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs === undefined || pollIntervalMs <= 0) {
+    return POLL_INTERVAL_MS;
+  }
+  return Math.max(1, Math.trunc(pollIntervalMs));
+}
+
+function setRequestedInterval(entry: CollectorEntry, listener: Listener, pollIntervalMs: number) {
+  const previous = entry.pollIntervalMs;
+  entry.requestedIntervals.set(listener, pollIntervalMs);
+  entry.pollIntervalMs = minimumRequestedInterval(entry);
+  if (entry.pollIntervalMs !== previous) entry.wakeDelay?.();
+}
+
+function removeRequestedInterval(entry: CollectorEntry, listener: Listener) {
+  const previous = entry.pollIntervalMs;
+  entry.requestedIntervals.delete(listener);
+  entry.pollIntervalMs = minimumRequestedInterval(entry);
+  if (entry.pollIntervalMs !== previous) entry.wakeDelay?.();
+}
+
+async function waitForNextPoll(
+  entry: CollectorEntry,
+  dependencies: VllmCollectorDependencies,
+): Promise<void> {
+  const delayController = new AbortController();
+  const delaySignal = AbortSignal.any([entry.controller.signal, delayController.signal]);
+  let resolveWake: (() => void) | null = null;
+  const wake = new Promise<void>((resolve) => {
+    resolveWake = resolve;
+  });
+  const wakeDelay = () => resolveWake?.();
+  entry.wakeDelay = wakeDelay;
+  const delay = dependencies.wait(entry.pollIntervalMs, delaySignal);
+  try {
+    await Promise.race([delay, wake]);
+  } finally {
+    if (entry.wakeDelay === wakeDelay) entry.wakeDelay = null;
+    delayController.abort();
+    void delay.catch(() => undefined);
+  }
+}
+
 function broadcast(entry: CollectorEntry, snapshot: VllmClusterSnapshot): void {
   for (const subscriber of entry.subscribers) {
     try {
@@ -241,7 +299,7 @@ async function runEntry(
   while (!entry.controller.signal.aborted) {
     await pollEntry(entry, dependencies);
     if (entry.controller.signal.aborted) return;
-    await dependencies.wait(POLL_INTERVAL_MS, entry.controller.signal);
+    await waitForNextPoll(entry, dependencies);
   }
 }
 
@@ -259,6 +317,8 @@ export function createVllmCollectorRegistry(dependencies: Partial<VllmCollectorD
       clearTimeout(entry.idleCleanup);
       entry.idleCleanup = null;
     }
+    entry.wakeDelay?.();
+    entry.wakeDelay = null;
     for (const onStopped of entry.onStopped.values()) {
       try {
         onStopped();
@@ -266,6 +326,7 @@ export function createVllmCollectorRegistry(dependencies: Partial<VllmCollectorD
     }
     entry.subscribers.clear();
     entry.onStopped.clear();
+    entry.requestedIntervals.clear();
     entry.controller.abort();
     if (entries.get(entry.cluster) === entry) entries.delete(entry.cluster);
   }
@@ -282,8 +343,20 @@ export function createVllmCollectorRegistry(dependencies: Partial<VllmCollectorD
     cluster: string,
     leaderHost: string,
     listener: Listener,
-    onStopped: () => void = () => {},
+    onStoppedOrOptions: (() => void) | VllmCollectorSubscribeOptions | number = () => {},
+    requestedPollIntervalMs?: number,
   ): () => void {
+    let onStopped = () => {};
+    let pollIntervalMs: number | undefined = requestedPollIntervalMs;
+    if (typeof onStoppedOrOptions === "function") {
+      onStopped = onStoppedOrOptions;
+    } else if (typeof onStoppedOrOptions === "number") {
+      pollIntervalMs = onStoppedOrOptions;
+    } else {
+      onStopped = onStoppedOrOptions.onStopped ?? onStopped;
+      pollIntervalMs = onStoppedOrOptions.pollIntervalMs ?? pollIntervalMs;
+    }
+    const normalizedPollInterval = normalizePollInterval(pollIntervalMs);
     const existing = entries.get(cluster);
     if (existing && existing.leaderHost !== leaderHost) stopEntry(existing);
     let entry = entries.get(cluster);
@@ -293,24 +366,37 @@ export function createVllmCollectorRegistry(dependencies: Partial<VllmCollectorD
         leaderHost,
         subscribers: new Set(),
         onStopped: new Map(),
+        requestedIntervals: new Map(),
+        pollIntervalMs: normalizedPollInterval,
         baseline: null,
         lastSnapshot: null,
         controller: new AbortController(),
-        running: Promise.resolve(),
+        running: null,
         idleCleanup: null,
+        wakeDelay: null,
       };
       entries.set(cluster, entry);
-      entry.running = runEntry(entry, resolved).catch(() => undefined);
     } else if (entry.idleCleanup) {
       clearTimeout(entry.idleCleanup);
       entry.idleCleanup = null;
     }
     entry.subscribers.add(listener);
     entry.onStopped.set(listener, onStopped);
-    if (entry.lastSnapshot) listener(entry.lastSnapshot);
+    setRequestedInterval(entry, listener, normalizedPollInterval);
+    if (entry.lastSnapshot) {
+      try {
+        listener(entry.lastSnapshot);
+      } catch {
+        // A cached replay cannot interrupt collection.
+      }
+    }
+    if (entry.running === null) {
+      entry.running = runEntry(entry, resolved).catch(() => undefined);
+    }
     return () => {
       if (!entry || !entry.subscribers.delete(listener)) return;
       entry.onStopped.delete(listener);
+      removeRequestedInterval(entry, listener);
       if (entry.subscribers.size === 0) scheduleIdleCleanup(entry);
     };
   }
@@ -318,6 +404,16 @@ export function createVllmCollectorRegistry(dependencies: Partial<VllmCollectorD
   return {
     subscribe,
     getEntry: (cluster: string) => entries.get(cluster),
+    stop: (cluster: string) => {
+      const entry = entries.get(cluster);
+      if (entry) stopEntry(entry);
+    },
+    emit: (cluster: string, snapshot: VllmClusterSnapshot) => {
+      const entry = entries.get(cluster);
+      if (!entry) return;
+      entry.lastSnapshot = snapshot;
+      broadcast(entry, snapshot);
+    },
     stopAll: () => {
       for (const entry of [...entries.values()]) stopEntry(entry);
     },

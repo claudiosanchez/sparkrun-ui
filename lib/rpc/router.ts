@@ -10,6 +10,7 @@ import * as chat from "./procedures/chat";
 import * as update from "./procedures/update";
 import * as services from "./procedures/services";
 import * as vllmMetrics from "./procedures/vllmMetrics";
+import * as tokenHistory from "./procedures/tokenHistory";
 
 export const router = {
   status: {
@@ -54,6 +55,9 @@ export const router = {
   },
   vllmMetrics: {
     stream: vllmMetrics.stream,
+  },
+  tokenHistory: {
+    get: tokenHistory.get,
   },
   chat: {
     stream: chat.stream,
