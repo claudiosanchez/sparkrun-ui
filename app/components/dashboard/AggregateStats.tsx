@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { Cpu, MemoryStick, Server, Thermometer, Zap } from "lucide-react";
 import { Card, CardBody } from "@/app/components/ui/Card";
 import { rpc } from "@/lib/rpc/client";
@@ -84,7 +84,7 @@ function aggregate(tick: MonitorTick | null): Aggregate {
   };
 }
 
-export function AggregateStats() {
+export const AggregateStats = memo(function AggregateStats() {
   const [tick, setTick] = useState<MonitorTick | null>(null);
   const [hist, setHist] = useState<{ cpu: number[]; gpu: number[] }>({ cpu: [], gpu: [] });
   const [connected, setConnected] = useState(false);
@@ -201,7 +201,7 @@ export function AggregateStats() {
       </CardBody>
     </Card>
   );
-}
+});
 
 function push(arr: number[], v: number): number[] {
   const next = arr.concat(v);

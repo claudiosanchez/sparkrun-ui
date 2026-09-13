@@ -1,16 +1,22 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ReactNode } from "react";
 import { deriveReactorState, type ReactorState } from "@/lib/reactorState";
+import { createReactorStateStore, type ReactorStateStore } from "@/lib/reactorStateStore";
 import type { ClusterEntry, ClusterStatus } from "@/lib/schemas";
 import { useReactor, type ReactorStatusUpdate } from "./useReactor";
 
-type StateMap = Record<string, ReactorState>;
-type StateUpdater = (name: string, state: ReactorState) => void;
-
-const stateContext = createContext<StateMap | null>(null);
-const updaterContext = createContext<StateUpdater | null>(null);
+const stateContext = createContext<ReactorStateStore | null>(null);
+const emptySubscribe = () => () => {};
 
 export function ReactorStateProvider({
   clusters,
@@ -23,8 +29,8 @@ export function ReactorStateProvider({
   onStatus: ReactorStatusUpdate;
   children: ReactNode;
 }) {
-  const initialState = useMemo(
-    () =>
+  const [store] = useState(() =>
+    createReactorStateStore(
       Object.fromEntries(
         clusters.map((cluster) => [
           cluster.name,
@@ -34,26 +40,21 @@ export function ReactorStateProvider({
           }),
         ]),
       ),
-    [clusters, initialStatuses],
+    ),
   );
-  const [states, setStates] = useState<StateMap>(initialState);
-  const update = useCallback((name: string, next: ReactorState) => {
-    setStates((previous) => (previous[name] === next ? previous : { ...previous, [name]: next }));
-  }, []);
 
   return (
-    <stateContext.Provider value={states}>
-      <updaterContext.Provider value={update}>
-        {clusters.map((cluster) => (
-          <ReactorStateSource
-            key={cluster.name}
-            cluster={cluster}
-            initial={initialStatuses[cluster.name] ?? null}
-            onStatus={onStatus}
-          />
-        ))}
-        {children}
-      </updaterContext.Provider>
+    <stateContext.Provider value={store}>
+      {clusters.map((cluster) => (
+        <ReactorStateSource
+          key={cluster.name}
+          cluster={cluster}
+          initial={initialStatuses[cluster.name] ?? null}
+          onStatus={onStatus}
+          store={store}
+        />
+      ))}
+      {children}
     </stateContext.Provider>
   );
 }
@@ -62,17 +63,18 @@ function ReactorStateSource({
   cluster,
   initial,
   onStatus,
+  store,
 }: {
   cluster: ClusterEntry;
   initial: ClusterStatus | null;
   onStatus: ReactorStatusUpdate;
+  store: ReactorStateStore;
 }) {
   const state = useReactor(cluster, initial, onStatus);
-  const update = useContext(updaterContext);
 
   useEffect(() => {
-    update?.(cluster.name, state);
-  }, [cluster.name, state, update]);
+    store.publish(cluster.name, state);
+  }, [cluster.name, state, store]);
 
   return null;
 }
@@ -81,7 +83,20 @@ export function useReactorState(
   cluster: ClusterEntry,
   initial: ClusterStatus | null = null,
 ): ReactorState {
-  const states = useContext(stateContext);
-  const state = states?.[cluster.name];
-  return state ?? deriveReactorState({ cluster, status: initial });
+  const store = useContext(stateContext);
+  const name = cluster.name;
+  const fallback = useMemo(
+    () => deriveReactorState({ cluster, status: initial }),
+    [cluster, initial],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => store?.subscribe(name, listener) ?? emptySubscribe(),
+    [name, store],
+  );
+  const getSnapshot = useCallback(
+    () => store?.getSnapshot(name) ?? fallback,
+    [fallback, name, store],
+  );
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

@@ -1,10 +1,15 @@
 "use client";
 
+import { memo } from "react";
 import type { ClusterEntry } from "@/lib/schemas";
 import { Card, CardBody } from "@/app/components/ui/Card";
 import { ClusterOverviewCard } from "./ClusterOverviewCard";
 
-export function ClusterOverviewSection({ clusters }: { clusters: ClusterEntry[] }) {
+export const ClusterOverviewSection = memo(function ClusterOverviewSection({
+  clusters,
+}: {
+  clusters: ClusterEntry[];
+}) {
   return (
     <section aria-label="Saved cluster overview" className="flex flex-col gap-3">
       <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Clusters</h2>
@@ -23,4 +28,4 @@ export function ClusterOverviewSection({ clusters }: { clusters: ClusterEntry[] 
       )}
     </section>
   );
-}
+});
