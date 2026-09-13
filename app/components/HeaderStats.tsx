@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Thermometer, Zap } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { rpc } from "@/lib/rpc/client";
 import { MonitorTick, monitorHostViews } from "@/lib/monitor";
 
@@ -20,8 +21,11 @@ const initial: Stats = { gpuPct: 0, gpuTempC: 0, connected: false };
 
 export function HeaderStats() {
   const [stats, setStats] = useState<Stats>(initial);
+  const pathname = usePathname();
 
   useEffect(() => {
+    if (pathname === "/dashboard") return;
+
     const ac = new AbortController();
     let cancelled = false;
     (async () => {
@@ -31,7 +35,9 @@ export function HeaderStats() {
           if (cancelled) break;
           const tick = next as MonitorTick;
           const views = monitorHostViews(tick);
-          const samples = Object.values(views).flatMap((host) => (host.sample ? [host.sample] : []));
+          const samples = Object.values(views).flatMap((host) =>
+            host.sample ? [host.sample] : [],
+          );
           let gpuSum = 0;
           let tempSum = 0;
           for (const s of samples) {
@@ -53,8 +59,9 @@ export function HeaderStats() {
       cancelled = true;
       ac.abort();
     };
-  }, []);
+  }, [pathname]);
 
+  if (pathname === "/dashboard") return null;
   if (!stats.connected && stats.gpuPct === 0) return null;
 
   return (
