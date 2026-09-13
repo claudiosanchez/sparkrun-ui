@@ -148,3 +148,43 @@ it("preserves zero and renders unavailable KV without a numeric value", () => {
   expect(html).toContain('aria-valuetext="Not reported"');
   expect(html).not.toContain('aria-valuenow="37.5"');
 });
+
+it("marks a numeric stale KV value in visible and accessible ring text", () => {
+  const rings: ReactorState["rings"] = {
+    memory: {
+      label: "Total unified memory",
+      percent: 50,
+      detail: "64.0 / 128.0 GB",
+      source: "sparkrun-monitor",
+    },
+    kv: {
+      label: "KV cache occupancy",
+      percent: 42,
+      detail: "Capacity not reported",
+      source: "vllm-metrics",
+      state: "stale",
+    },
+    gpu: {
+      label: "GPU compute utilization",
+      percent: 70,
+      detail: "Compute load",
+      source: "sparkrun-monitor",
+    },
+  };
+  const inference: ReactorState["inference"] = {
+    state: "unavailable",
+    stateText: "Tokens per second unavailable",
+    tokensPerSecond: null,
+    tokensPerSecondText: "—",
+    runningText: "—",
+    queuedText: "—",
+    clientsText: "—",
+    sessionsText: "—",
+  };
+  const html = renderToStaticMarkup(
+    createElement(ReactorRings, { rings, inference, modelText: "qwen" }),
+  );
+
+  expect(html).toContain("42.0% · stale");
+  expect(html).toContain('aria-valuetext="42.0% · stale"');
+});

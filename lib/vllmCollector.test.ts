@@ -158,6 +158,77 @@ describe("createVllmCollectorRegistry", () => {
     removeSecond();
     registry.stopAll();
   });
+
+  it("clears the token baseline for an invalid generation family before recovery", async () => {
+    let releaseWait: (() => void) | undefined;
+    const wait = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseWait = resolve;
+        }),
+    );
+    const invalidGeneration = 'vllm:generation_tokens_total{model_name="qwen"} NaN\n';
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(response(body))
+      .mockResolvedValueOnce(response(invalidGeneration))
+      .mockResolvedValueOnce(response(body.replace(" 100", " 160")));
+    const monotonicNow = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(3_000)
+      .mockReturnValueOnce(5_000);
+    const registry = createVllmCollectorRegistry({
+      ...dependencies(fetch, wait),
+      monotonicNow,
+    });
+    const listener = vi.fn();
+    const remove = registry.subscribe("c032", "host", listener);
+
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
+    expect(listener.mock.calls[0][0].metrics.tokensPerSecond).toMatchObject({
+      value: null,
+      state: "warming",
+    });
+
+    releaseWait!();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2));
+    expect(listener.mock.calls[1][0].metrics.tokensPerSecond).toMatchObject({
+      value: null,
+      state: "unavailable",
+    });
+
+    releaseWait!();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(3));
+    expect(listener.mock.calls[2][0].metrics.tokensPerSecond).toMatchObject({
+      value: null,
+      state: "warming",
+    });
+
+    remove();
+    registry.stopAll();
+  });
+
+  it("rejects a body without any recognized vLLM target family", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(response("process_cpu_seconds_total 999\n"));
+    const registry = createVllmCollectorRegistry(dependencies(fetch));
+    const listener = vi.fn();
+    const remove = registry.subscribe("c032", "host", listener);
+
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
+    expect(listener.mock.calls[0][0]).toMatchObject({
+      state: "unavailable",
+      error: "invalid metrics",
+      metrics: {
+        tokensPerSecond: { value: null, state: "unavailable" },
+      },
+    });
+
+    remove();
+    registry.stopAll();
+  });
 });
 
 describe("fetchVllmMetrics", () => {

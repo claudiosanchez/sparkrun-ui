@@ -26,8 +26,22 @@ function ringColor(key: RingKey, state: ReactorState["rings"]["kv"]["state"] | u
   return ringOrder.find((ring) => ring.key === key)!.color;
 }
 
-function ReactorRing({ ring, color, radius }: { ring: RingValue; color: string; radius: number }) {
+function ReactorRing({
+  ring,
+  color,
+  radius,
+  stale = false,
+}: {
+  ring: RingValue;
+  color: string;
+  radius: number;
+  stale?: boolean;
+}) {
   const value = clampPercent(ring.percent);
+  const accessibleValue =
+    value === null
+      ? `Not reported${stale ? " · stale" : ""}`
+      : `${value.toFixed(1)}%${stale ? " · stale" : ""}`;
   return (
     <circle
       cx="60"
@@ -44,7 +58,7 @@ function ReactorRing({ ring, color, radius }: { ring: RingValue; color: string; 
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={value === null ? undefined : value}
-      aria-valuetext={value === null ? "Not reported" : undefined}
+      aria-valuetext={accessibleValue}
     />
   );
 }
@@ -64,6 +78,7 @@ export function ReactorRings({
         <dl className="order-1 grid grid-cols-1 gap-2 sm:order-2 sm:min-w-44">
           {ringOrder.map(({ key }) => {
             const ring = rings[key];
+            const stale = key === "kv" && rings.kv.state === "stale";
             return (
               <div key={ring.label} className="flex items-start gap-2">
                 <span
@@ -79,7 +94,9 @@ export function ReactorRings({
                 <div className="min-w-0">
                   <dt className="text-xs text-zinc-500 dark:text-zinc-400">{ring.label}</dt>
                   <dd className="font-mono text-sm font-medium text-zinc-900 tabular-nums dark:text-zinc-100">
-                    {ring.percent === null ? "—" : `${ring.percent.toFixed(1)}%`}
+                    {ring.percent === null
+                      ? `—${stale ? " · stale" : ""}`
+                      : `${ring.percent.toFixed(1)}%${stale ? " · stale" : ""}`}
                   </dd>
                   <dd className="text-[11px] text-zinc-500 dark:text-zinc-400">{ring.detail}</dd>
                 </div>
@@ -106,7 +123,12 @@ export function ReactorRings({
               />
             ))}
             <ReactorRing ring={rings.memory} color={ringColor("memory", undefined)} radius={54} />
-            <ReactorRing ring={rings.kv} color={ringColor("kv", rings.kv.state)} radius={42} />
+            <ReactorRing
+              ring={rings.kv}
+              color={ringColor("kv", rings.kv.state)}
+              radius={42}
+              stale={rings.kv.state === "stale"}
+            />
             <ReactorRing ring={rings.gpu} color={ringColor("gpu", undefined)} radius={30} />
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
