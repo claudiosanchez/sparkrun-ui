@@ -87,6 +87,16 @@ export function MonitorLive() {
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {hosts.map(([host, h]) => {
+            if (h.error && !h.sample) {
+              return (
+                <Card key={host}>
+                  <CardBody className="text-sm text-zinc-500 dark:text-zinc-400">
+                    <div className="font-semibold text-zinc-700 dark:text-zinc-300">{host}</div>
+                    <div className="mt-1">{h.error}</div>
+                  </CardBody>
+                </Card>
+              );
+            }
             const metrics = h.sample || {};
             return (
               <HostCard
