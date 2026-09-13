@@ -186,6 +186,7 @@ sparkrun cluster list --json
 | `lib/rpc/procedures/services.ts` | Resolve a saved cluster and perform the bounded model API health check. |
 | `lib/rpc/router.ts` | Register the model-service health procedure. |
 | `app/dashboard/page.tsx` | Discover clusters and load initial per-cluster status without a single-cluster assumption. |
+| `lib/reactorState.ts` | Derive display-safe reactor labels and measurements from typed data. |
 | `app/components/dashboard/TwinReactorFleet.tsx` | Coordinate the reactor cards and their responsive stage. |
 | `app/components/dashboard/ReactorCard.tsx` | Render one cluster's live state and accessible status. |
 | `app/components/dashboard/useReactor.ts` | Subscribe to a single cluster's status and telemetry, and poll service health. |
@@ -216,8 +217,12 @@ sparkrun cluster list --json
 
 ## Deployment Constraints
 
-- Build and deploy only the merged `main` commit.
-- Run the production server with the project-supported standalone entry point,
-  not `next start` against an `output: standalone` build.
+- Keep this work on the local fork branch. Do not open, merge, or deploy a
+  pull request for this change.
+- Do not deploy to Coxshire without a separate explicit instruction from the
+  project owner.
+- If deployment is later requested, run the production server with the
+  project-supported standalone entry point, not `next start` against an
+  `output: standalone` build.
 - Preserve the working `SPARKRUN_BIN` path in Coxshire's service environment.
 - Do not change C032 or C458 model lifecycle while deploying this UI change.
