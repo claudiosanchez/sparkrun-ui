@@ -9,6 +9,7 @@ import { Badge } from "@/app/components/ui/Badge";
 import { Button } from "@/app/components/ui/Button";
 import { WorkloadCard } from "./WorkloadCard";
 import { TwinReactorFleet } from "./TwinReactorFleet";
+import { AggregateStats } from "./AggregateStats";
 
 function formatHostError(value: unknown): string {
   if (typeof value === "string") return value;
@@ -57,6 +58,8 @@ export function DashboardLive({
           </Badge>
         </div>
       </div>
+
+      <AggregateStats />
 
       <TwinReactorFleet
         clusters={clusters}
