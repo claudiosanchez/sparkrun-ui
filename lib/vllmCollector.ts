@@ -78,6 +78,14 @@ async function readBoundedText(response: Response): Promise<string> {
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let bytes = 0;
   let text = "";
+  let cancelled = false;
+  const cancelReader = async () => {
+    if (cancelled) return;
+    cancelled = true;
+    try {
+      await reader.cancel();
+    } catch {}
+  };
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -91,9 +99,7 @@ async function readBoundedText(response: Response): Promise<string> {
       }
       bytes += value.byteLength;
       if (bytes > MAX_METRICS_BYTES) {
-        try {
-          await reader.cancel();
-        } catch {}
+        await cancelReader();
         throw new PollError("response too large");
       }
       try {
@@ -102,6 +108,9 @@ async function readBoundedText(response: Response): Promise<string> {
         throw new PollError("invalid metrics");
       }
     }
+  } catch (error) {
+    await cancelReader();
+    throw error;
   } finally {
     reader.releaseLock();
   }

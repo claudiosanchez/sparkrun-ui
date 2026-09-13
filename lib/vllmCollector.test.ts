@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createVllmCollectorRegistry, type VllmCollectorDependencies } from "./vllmCollector";
+import {
+  createVllmCollectorRegistry,
+  fetchVllmMetrics,
+  type VllmCollectorDependencies,
+} from "./vllmCollector";
 
 const body = `
 vllm:generation_tokens_total{model_name="qwen"} 100
@@ -139,5 +143,29 @@ describe("createVllmCollectorRegistry", () => {
     expect(registry.getEntry("c032")).toBeDefined();
     remove458();
     registry.stopAll();
+  });
+});
+
+describe("fetchVllmMetrics", () => {
+  it("cancels a response reader when UTF-8 decoding fails", async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    const reader = {
+      read: vi.fn().mockResolvedValue({ done: false, value: new Uint8Array([0xff]) }),
+      cancel,
+      releaseLock: vi.fn(),
+    };
+    const fetcher = vi.fn<typeof globalThis.fetch>().mockResolvedValue({
+      ok: true,
+      status: 200,
+      redirected: false,
+      type: "basic",
+      body: { getReader: () => reader },
+    } as unknown as Response);
+
+    await expect(fetchVllmMetrics("host", new AbortController().signal, fetcher)).rejects.toThrow(
+      "invalid metrics",
+    );
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(reader.releaseLock).toHaveBeenCalledTimes(1);
   });
 });
