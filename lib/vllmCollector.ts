@@ -25,6 +25,7 @@ export type CollectorEntry = {
   cluster: string;
   leaderHost: string;
   subscribers: Set<Listener>;
+  onStopped: Map<Listener, () => void>;
   baseline: CounterBaseline | null;
   lastSnapshot: VllmClusterSnapshot | null;
   controller: AbortController;
@@ -263,6 +264,13 @@ export function createVllmCollectorRegistry(dependencies: Partial<VllmCollectorD
       clearTimeout(entry.idleCleanup);
       entry.idleCleanup = null;
     }
+    for (const onStopped of entry.onStopped.values()) {
+      try {
+        onStopped();
+      } catch {}
+    }
+    entry.subscribers.clear();
+    entry.onStopped.clear();
     entry.controller.abort();
     if (entries.get(entry.cluster) === entry) entries.delete(entry.cluster);
   }
@@ -275,7 +283,12 @@ export function createVllmCollectorRegistry(dependencies: Partial<VllmCollectorD
     }, IDLE_GRACE_MS);
   }
 
-  function subscribe(cluster: string, leaderHost: string, listener: Listener): () => void {
+  function subscribe(
+    cluster: string,
+    leaderHost: string,
+    listener: Listener,
+    onStopped: () => void = () => {},
+  ): () => void {
     const existing = entries.get(cluster);
     if (existing && existing.leaderHost !== leaderHost) stopEntry(existing);
     let entry = entries.get(cluster);
@@ -284,6 +297,7 @@ export function createVllmCollectorRegistry(dependencies: Partial<VllmCollectorD
         cluster,
         leaderHost,
         subscribers: new Set(),
+        onStopped: new Map(),
         baseline: null,
         lastSnapshot: null,
         controller: new AbortController(),
@@ -297,9 +311,11 @@ export function createVllmCollectorRegistry(dependencies: Partial<VllmCollectorD
       entry.idleCleanup = null;
     }
     entry.subscribers.add(listener);
+    entry.onStopped.set(listener, onStopped);
     if (entry.lastSnapshot) listener(entry.lastSnapshot);
     return () => {
       if (!entry || !entry.subscribers.delete(listener)) return;
+      entry.onStopped.delete(listener);
       if (entry.subscribers.size === 0) scheduleIdleCleanup(entry);
     };
   }

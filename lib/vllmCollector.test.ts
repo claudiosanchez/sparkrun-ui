@@ -144,6 +144,20 @@ describe("createVllmCollectorRegistry", () => {
     remove458();
     registry.stopAll();
   });
+
+  it("notifies a replaced stream owner when a saved leader changes", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response(body));
+    const registry = createVllmCollectorRegistry(dependencies(fetch));
+    const firstStopped = vi.fn();
+    const removeFirst = registry.subscribe("c032", "old-host", vi.fn(), firstStopped);
+    const removeSecond = registry.subscribe("c032", "new-host", vi.fn());
+
+    expect(firstStopped).toHaveBeenCalledTimes(1);
+    expect(registry.getEntry("c032")?.leaderHost).toBe("new-host");
+    removeFirst();
+    removeSecond();
+    registry.stopAll();
+  });
 });
 
 describe("fetchVllmMetrics", () => {

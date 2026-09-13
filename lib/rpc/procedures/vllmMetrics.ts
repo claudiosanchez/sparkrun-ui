@@ -80,34 +80,38 @@ export async function* streamClusterMetrics(
   }
 
   const queue: VllmClusterSnapshot[] = [];
+  const streamController = new AbortController();
+  const streamSignal = AbortSignal.any([owner, streamController.signal]);
   let wake: (() => void) | null = null;
   const notify = (snapshot: VllmClusterSnapshot) => {
     queue.push(snapshot);
     wake?.();
     wake = null;
   };
-  const unsubscribe = registry.subscribe(input.cluster, leaderHost, notify);
+  const unsubscribe = registry.subscribe(input.cluster, leaderHost, notify, () => {
+    streamController.abort();
+  });
   const onAbort = () => {
     wake?.();
     wake = null;
   };
-  owner.addEventListener("abort", onAbort, { once: true });
+  streamSignal.addEventListener("abort", onAbort, { once: true });
   try {
-    while (!owner.aborted) {
+    while (!streamSignal.aborted) {
       if (queue.length > 0) {
         yield queue.shift()!;
         continue;
       }
       await new Promise<void>((resolve) => {
         wake = resolve;
-        if (owner.aborted) {
+        if (streamSignal.aborted) {
           wake = null;
           resolve();
         }
       });
     }
   } finally {
-    owner.removeEventListener("abort", onAbort);
+    streamSignal.removeEventListener("abort", onAbort);
     unsubscribe();
   }
 }
