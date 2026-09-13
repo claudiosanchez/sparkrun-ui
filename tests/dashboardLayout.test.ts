@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { DashboardLive } from "@/app/components/dashboard/DashboardLive";
+import { ClusterOverviewSection } from "@/app/components/dashboard/ClusterOverviewSection";
 import { ClusterStatusSchema } from "@/lib/schemas";
 
 it("keeps the existing overview above the added reactor fleet and workload section", () => {
@@ -51,4 +52,18 @@ it("renders every saved cluster in a separate overview section", () => {
   expect(html.indexOf('aria-label="Saved cluster fleet"')).toBeLessThan(
     html.indexOf(">Workloads</h2>"),
   );
+});
+
+it("renders the aggregate overview metric treatment for every saved cluster, including a third", () => {
+  const clusters = ["alpha", "beta", "gamma"].map((name, index) => ({
+    name,
+    hosts: [`10.0.0.${index + 1}`],
+    is_default: index === 0,
+  }));
+  const html = renderToStaticMarkup(createElement(ClusterOverviewSection, { clusters }));
+
+  for (const name of ["alpha", "beta", "gamma"]) expect(html).toContain(`>${name}<`);
+  for (const label of ["CPU", "GPU", "Memory", "Power", "Temps"]) {
+    expect(html.match(new RegExp(`>${label}<`, "g")) ?? []).toHaveLength(3);
+  }
 });

@@ -14,7 +14,9 @@ function reactor(name: string): ReactorState {
     modelText: "test-model",
     managedWorkloadCount: 0,
     managedWorkloadText: "0 managed workloads",
+    trends: { cpu: [], gpu: [] },
     metrics: {
+      cpuPercent: 0,
       gpuPercent: 0,
       gpuText: "0%",
       cpuText: "0.0%",

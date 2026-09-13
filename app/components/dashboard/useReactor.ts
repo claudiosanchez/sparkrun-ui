@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { rpc } from "@/lib/rpc/client";
 import { deriveReactorState } from "@/lib/reactorState";
+import { appendReactorTrend, type ReactorTrend } from "@/lib/reactorTrend";
 import type { MonitorTick } from "@/lib/monitor";
 import type { ClusterEntry, ClusterStatus } from "@/lib/schemas";
 import type { ServiceHealth } from "@/lib/rpc/procedures/services";
@@ -10,6 +11,7 @@ import type { ServiceHealth } from "@/lib/rpc/procedures/services";
 export type ReactorStatusUpdate = (cluster: string, status: ClusterStatus) => void;
 
 const HEALTH_TIMEOUT_MS = 4_000;
+const TREND_HISTORY = 40;
 
 export function healthSignal(signal: AbortSignal): AbortSignal {
   return AbortSignal.any([signal, AbortSignal.timeout(HEALTH_TIMEOUT_MS)]);
@@ -23,6 +25,7 @@ export function useReactor(
   const [status, setStatus] = useState(initial);
   const [tick, setTick] = useState<MonitorTick | null>(null);
   const [service, setService] = useState<ServiceHealth | null>(null);
+  const [trends, setTrends] = useState<ReactorTrend>({ cpu: [], gpu: [] });
   const [statusReconnecting, setStatusReconnecting] = useState(false);
   const [monitorReconnecting, setMonitorReconnecting] = useState(false);
   const name = cluster.name;
@@ -74,7 +77,17 @@ export function useReactor(
     );
     void subscribe(
       () => rpc.monitor.stream({ cluster: name, intervalSec: 2 }, { signal }),
-      setTick,
+      (next) => {
+        setTick(next);
+        const metrics = deriveReactorState({ cluster, tick: next }).metrics;
+        setTrends((previous) =>
+          appendReactorTrend(
+            previous,
+            { cpu: metrics.cpuPercent, gpu: metrics.gpuPercent },
+            TREND_HISTORY,
+          ),
+        );
+      },
       setMonitorReconnecting,
     );
 
@@ -99,17 +112,19 @@ export function useReactor(
       ac.abort();
       clearInterval(healthTimer);
     };
-  }, [name, onStatus]);
+  }, [cluster, name, onStatus]);
 
   return useMemo(
-    () =>
-      deriveReactorState({
+    () => ({
+      ...deriveReactorState({
         cluster,
         status,
         tick,
         service,
         reconnecting: statusReconnecting || monitorReconnecting,
       }),
-    [cluster, status, tick, service, statusReconnecting, monitorReconnecting],
+      trends,
+    }),
+    [cluster, status, tick, service, statusReconnecting, monitorReconnecting, trends],
   );
 }

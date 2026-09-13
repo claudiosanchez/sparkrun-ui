@@ -81,6 +81,7 @@ describe("deriveReactorState", () => {
   it("formats current measurements without fabricating GPU memory", () => {
     const { metrics } = deriveReactorState({ cluster: c032Entry, tick: c032Tick });
     expect(metrics).toMatchObject({
+      cpuPercent: 12.5,
       gpuPercent: 70,
       gpuText: "70%",
       cpuText: "12.5%",

@@ -63,6 +63,7 @@ export function deriveReactorState({
   const telemetryState = reconnecting ? "reconnecting" : valid ? "live" : "unavailable";
   const serviceState = service?.state ?? "checking";
   const managedWorkloadCount = status ? status.solo_entries.length : null;
+  const cpuPercent = metric("cpu_usage_pct", true);
   const gpuPercent = metric("gpu_util_pct", true);
   return {
     name: cluster.name,
@@ -94,10 +95,12 @@ export function deriveReactorState({
       managedWorkloadCount === null
         ? "Managed workloads unavailable"
         : `${managedWorkloadCount} managed workload${managedWorkloadCount === 1 ? "" : "s"}`,
+    trends: { cpu: [] as number[], gpu: [] as number[] },
     metrics: {
+      cpuPercent,
       gpuPercent,
       gpuText: text(gpuPercent, "%"),
-      cpuText: text(metric("cpu_usage_pct", true), "%", 1),
+      cpuText: text(cpuPercent, "%", 1),
       memoryText: memoryText("mem"),
       gpuMemoryText: memoryText("gpu_mem"),
       gpuTemperatureText: text(metric("gpu_temp_c", true), "°C"),
