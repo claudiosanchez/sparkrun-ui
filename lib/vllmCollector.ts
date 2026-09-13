@@ -185,13 +185,7 @@ async function pollEntry(
   let parsed;
   try {
     parsed = parseVllmMetrics(text);
-    const hasRecognizedTargetFamily =
-      parsed.generationTokenSeries !== null ||
-      parsed.runningRequests !== null ||
-      parsed.waitingRequests !== null ||
-      parsed.kvCachePercent !== null ||
-      parsed.invalidFamilies.size > 0;
-    if (!hasRecognizedTargetFamily) {
+    if (!parsed.hasValidSamples && parsed.invalidFamilies.size === 0) {
       throw new PollError("invalid metrics");
     }
   } catch (error) {

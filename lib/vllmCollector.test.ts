@@ -209,10 +209,8 @@ describe("createVllmCollectorRegistry", () => {
     registry.stopAll();
   });
 
-  it("rejects a body without any recognized vLLM target family", async () => {
-    const fetch = vi
-      .fn<typeof globalThis.fetch>()
-      .mockResolvedValue(response("process_cpu_seconds_total 999\n"));
+  it("rejects a body without valid Prometheus samples or a recognized target family", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response("not prometheus\n"));
     const registry = createVllmCollectorRegistry(dependencies(fetch));
     const listener = vi.fn();
     const remove = registry.subscribe("c032", "host", listener);
