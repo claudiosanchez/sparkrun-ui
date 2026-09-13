@@ -49,6 +49,7 @@ describe("deriveReactorState", () => {
       kv: { percent: 37.5, source: "vllm-metrics" },
       gpu: { percent: 70, source: "sparkrun-monitor" },
     });
+    expect(state.rings.gpu.detail).toBe("Compute load");
     expect(state.inference).toMatchObject({
       tokensPerSecondText: "42.6",
       runningText: "1",

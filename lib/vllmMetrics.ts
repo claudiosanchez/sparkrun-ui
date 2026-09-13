@@ -30,7 +30,7 @@ const RUNNING_REQUESTS = "vllm:num_requests_running";
 const WAITING_REQUESTS = "vllm:num_requests_waiting";
 const KV_CACHE = "vllm:kv_cache_usage_perc";
 const allowed = new Set([GENERATION_TOKENS, RUNNING_REQUESTS, WAITING_REQUESTS, KV_CACHE]);
-const sampleLine = /^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{([^}]*)\})?\s+([^\s]+)(?:\s+\S+)?$/;
+const sampleLine = /^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{([^}]*)\})?\s+([^\s]+)(?:\s+\d+)?$/;
 const familyAtLineStart = /^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{|\s|$)/;
 const labelPair = /^([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"\\])*)"$/;
 
@@ -73,7 +73,7 @@ function canonicalLabels(raw: string | undefined): string | null {
     names.add(match[1]);
     parsed.push([match[1], match[2]]);
   }
-  parsed.sort(([left], [right]) => left.localeCompare(right));
+  parsed.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
   return parsed.map(([name, value]) => `${name}="${value}"`).join(",");
 }
 

@@ -161,7 +161,7 @@ export function deriveReactorState({
       gpu: {
         label: "GPU compute utilization",
         percent: gpuPercent,
-        detail: metricsText(gpuPercent, "%"),
+        detail: "Compute load",
         source: "sparkrun-monitor" as const,
       },
     },
@@ -188,10 +188,6 @@ export function deriveReactorState({
       powerText: text(metric("gpu_power_w"), " W", 1),
     },
   };
-}
-
-function metricsText(value: number | null, unit: string): string {
-  return value === null ? "—" : `${value.toFixed(1)}${unit}`;
 }
 
 export type ReactorState = ReturnType<typeof deriveReactorState>;
