@@ -4,8 +4,6 @@ import { Thermometer, Zap } from "lucide-react";
 import { rpc } from "@/lib/rpc/client";
 import { MonitorTick, monitorHostViews } from "@/lib/monitor";
 
-type HostMetrics = Record<string, string | undefined>;
-
 function num(s: string | undefined): number {
   if (!s) return 0;
   const v = parseFloat(s);

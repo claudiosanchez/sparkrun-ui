@@ -4,7 +4,7 @@ import { Card, CardBody } from "@/app/components/ui/Card";
 import { Badge } from "@/app/components/ui/Badge";
 import { rpc } from "@/lib/rpc/client";
 import { MonitorTick, monitorHostViews, MonitorHost } from "@/lib/monitor";
-import { HostCard, type HostHistory, type HostMetrics } from "./HostCard";
+import { HostCard, type HostHistory } from "./HostCard";
 
 const HISTORY_LIMIT = 30;
 
