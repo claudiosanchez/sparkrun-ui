@@ -40,6 +40,32 @@ afterEach(() => {
 });
 
 describe("createVllmCollectorRegistry", () => {
+  it("uses the minimum requested subscriber interval and wakes when it changes", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response(body));
+    const wait = vi.fn(
+      (_ms: number, signal: AbortSignal) =>
+        new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        ),
+    );
+    const registry = createVllmCollectorRegistry({ ...dependencies(fetch), wait });
+    const recorder = vi.fn();
+    const browser = vi.fn();
+    const removeRecorder = registry.subscribe("c032", "host", recorder, undefined, 5_000);
+
+    await vi.waitFor(() => expect(wait).toHaveBeenCalledWith(5_000, expect.any(AbortSignal)));
+    expect(registry.getEntry("c032")?.pollIntervalMs).toBe(5_000);
+
+    const removeBrowser = registry.subscribe("c032", "host", browser);
+    await vi.waitFor(() => expect(registry.getEntry("c032")?.pollIntervalMs).toBe(2_000));
+    await vi.waitFor(() => expect(wait.mock.calls.some(([ms]) => ms === 2_000)).toBe(true));
+
+    removeBrowser();
+    await vi.waitFor(() => expect(registry.getEntry("c032")?.pollIntervalMs).toBe(5_000));
+    removeRecorder();
+    registry.stopAll();
+  });
+
   it("shares one poll loop and one response across subscribers to a cluster", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response(body));
     const registry = createVllmCollectorRegistry(dependencies(fetch));

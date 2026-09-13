@@ -148,6 +148,8 @@ git commit -m "feat: add durable token history store"
 **Files:**
 - Create: lib/tokenHistoryRecorder.ts
 - Create: lib/tokenHistoryRecorder.test.ts
+- Create: lib/vllmCollectorRuntime.ts
+- Create: lib/vllmCollectorRuntime.test.ts
 - Create: lib/rpc/procedures/tokenHistory.ts
 - Create: lib/rpc/procedures/tokenHistory.test.ts
 - Create: instrumentation.ts
@@ -162,8 +164,10 @@ git commit -m "feat: add durable token history store"
 - Produces `startTokenHistoryRecorder(): () => void`.
 - Produces `rpc.tokenHistory.get({ cluster, range })`.
 - Extends `VllmCollectorRegistry.subscribe()` with optional `pollIntervalMs`.
+- Produces `getProductionVllmCollectorRuntime()` backed by `globalThis`, so
+  instrumentation and the live RPC stream use exactly one collector registry.
 
-- [ ] **Step 1: Write a failing recorder isolation test**
+- [x] **Step 1: Write a failing recorder isolation test**
 
 ```ts
 it("records live zero and positive Tokens/s without a browser subscriber", async () => {
@@ -176,13 +180,13 @@ it("records live zero and positive Tokens/s without a browser subscriber", async
 });
 ```
 
-- [ ] **Step 2: Run the recorder test red**
+- [x] **Step 2: Run the recorder test red**
 
 Run: `pnpm vitest run lib/tokenHistoryRecorder.test.ts`
 
 Expected: FAIL because the recorder module does not exist.
 
-- [ ] **Step 3: Implement recorder ownership and cadence**
+- [x] **Step 3: Implement recorder ownership and cadence**
 
 ```ts
 export function startTokenHistoryRecorder(): () => void {
@@ -193,9 +197,20 @@ export function startTokenHistoryRecorder(): () => void {
 }
 ```
 
-Create one hidden server subscriber per saved cluster and refresh the saved-cluster list without leaking prior subscriptions. Record only `snapshot.metrics.tokensPerSecond.state === "live"`; write all other states as null observations. A dashboard subscriber uses 2 seconds; recorder-only uses 5 seconds.
+Move the saved-cluster loader and production registry from the RPC procedure
+into `lib/vllmCollectorRuntime.ts`. Keep the runtime on `globalThis` so Next's
+separately compiled instrumentation and route entries share one registry.
+Create one hidden server subscriber per saved cluster and refresh the
+saved-cluster list without leaking prior subscriptions. A temporary discovery
+failure retains the last known subscriptions. Compare the full normalized,
+ordered host list before replacing a subscription, not only the leader. Record
+only `snapshot.metrics.tokensPerSecond.state === "live"`; write all other
+states as null observations. De-duplicate an immediate cached snapshot after
+a target replacement. A dashboard subscriber uses 2 seconds; recorder-only
+uses 5 seconds. Any asynchronous store rejection is caught inside the
+listener, so it cannot produce an unhandled rejection or stop collection.
 
-- [ ] **Step 4: Start the recorder once using instrumentation**
+- [x] **Step 4: Start the recorder once using instrumentation**
 
 ```ts
 export async function register() {
@@ -208,7 +223,7 @@ export async function register() {
 
 The hook must not throw or stop the UI server when storage is unavailable.
 
-- [ ] **Step 5: Write failing RPC validation tests**
+- [x] **Step 5: Write failing RPC validation tests**
 
 ```ts
 it("rejects an unknown cluster", async () => {
@@ -220,13 +235,13 @@ it("returns no more than 360 points for 30 days", async () => {
 });
 ```
 
-- [ ] **Step 6: Run RPC tests red**
+- [x] **Step 6: Run RPC tests red**
 
 Run: `pnpm vitest run lib/rpc/procedures/tokenHistory.test.ts`
 
 Expected: FAIL because the procedure is not registered.
 
-- [ ] **Step 7: Implement and register the read-only RPC**
+- [x] **Step 7: Implement and register the read-only RPC**
 
 ```ts
 export const get = os
@@ -240,11 +255,11 @@ export const get = os
 
 Validate only saved cluster names. Return the `unavailable` result state for history-store reads that fail. Do not accept a host, URL, or file path.
 
-- [ ] **Step 8: Add configuration**
+- [x] **Step 8: Add configuration**
 
 Document `SPARKRUN_UI_DATA_DIR` in README. Mount a dedicated application data directory in docker-compose, separate from `~/.cache/sparkrun`. State that collection begins after deployment and has one writer per data directory.
 
-- [ ] **Step 9: Run focused collection tests green**
+- [x] **Step 9: Run focused collection tests green**
 
 Run: `pnpm vitest run lib/tokenHistory.test.ts lib/tokenHistoryFileStore.test.ts lib/tokenHistoryRecorder.test.ts lib/rpc/procedures/tokenHistory.test.ts lib/vllmCollector.test.ts lib/rpc/procedures/vllmMetrics.test.ts`
 
@@ -253,7 +268,7 @@ Expected: PASS.
 - [ ] **Step 10: Commit, review, merge, and deploy the collection slice**
 
 ```bash
-git add instrumentation.ts lib/tokenHistoryRecorder.ts lib/tokenHistoryRecorder.test.ts lib/rpc/procedures/tokenHistory.ts lib/rpc/procedures/tokenHistory.test.ts lib/vllmCollector.ts lib/rpc/procedures/vllmMetrics.ts lib/rpc/router.ts docker-compose.yml README.md
+git add instrumentation.ts lib/tokenHistoryRecorder.ts lib/tokenHistoryRecorder.test.ts lib/vllmCollectorRuntime.ts lib/vllmCollectorRuntime.test.ts lib/rpc/procedures/tokenHistory.ts lib/rpc/procedures/tokenHistory.test.ts lib/vllmCollector.ts lib/rpc/procedures/vllmMetrics.ts lib/rpc/router.ts docker-compose.yml README.md docs/superpowers/plans/2026-09-13-token-throughput-history.md
 git commit -m "feat: record token throughput history"
 ```
 
@@ -434,4 +449,3 @@ Open and merge a PR into `claudio-fork/main`. Create a rollback copy, deploy the
 - Spec coverage: Tasks 1--2 provide durable collection, retention, startup, and safe queries. Task 3 provides an early visible 15m card. Task 4 adds the requested remaining ranges, complete verification, and the release record.
 - Placeholder scan: zero, gaps, retention, safe inputs, deployment, and verification all have explicit behavior.
 - Type consistency: TrendRange, TokenHistoryStore, TokenHistoryResult, and rpc.tokenHistory.get are defined before later tasks use them.
-
