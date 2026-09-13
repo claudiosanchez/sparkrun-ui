@@ -7,6 +7,13 @@ const SavedClusterSchema = z.object({
   hosts: z.array(z.string()).default([]),
 });
 
+const HEALTH_TIMEOUT_MS = 3_000;
+
+function healthSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(HEALTH_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 export const ServiceHealthSchema = z.object({
   cluster: z.string(),
   host: z.string().nullable(),
@@ -30,10 +37,17 @@ function modelFromResponse(body: unknown): string | null {
   return model?.model ?? model?.id ?? null;
 }
 
-export async function healthForCluster(cluster: string): Promise<ServiceHealth> {
+export async function healthForCluster(
+  cluster: string,
+  signal?: AbortSignal,
+): Promise<ServiceHealth> {
+  const bounded = healthSignal(signal);
   let savedClusters: z.infer<typeof SavedClusterSchema>[];
   try {
-    const raw = await runSparkrunJson<unknown>(["cluster", "list", "--json"]);
+    const raw = await runSparkrunJson<unknown>(["cluster", "list", "--json"], {
+      signal: bounded,
+      timeoutMs: HEALTH_TIMEOUT_MS,
+    });
     savedClusters = z.array(SavedClusterSchema).parse(raw);
   } catch {
     return unavailable(cluster, null);
@@ -45,7 +59,7 @@ export async function healthForCluster(cluster: string): Promise<ServiceHealth> 
 
   try {
     const response = await fetch(`http://${host}:8000/v1/models`, {
-      signal: AbortSignal.timeout(3_000),
+      signal: bounded,
     });
     if (!response.ok) return unavailable(cluster, host);
 
@@ -59,4 +73,4 @@ export async function healthForCluster(cluster: string): Promise<ServiceHealth> 
 export const health = os
   .input(z.object({ cluster: z.string().min(1) }))
   .output(ServiceHealthSchema)
-  .handler(({ input }) => healthForCluster(input.cluster));
+  .handler(({ input, signal }) => healthForCluster(input.cluster, signal));

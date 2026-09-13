@@ -9,6 +9,12 @@ import type { ServiceHealth } from "@/lib/rpc/procedures/services";
 
 export type ReactorStatusUpdate = (cluster: string, status: ClusterStatus) => void;
 
+const HEALTH_TIMEOUT_MS = 4_000;
+
+export function healthSignal(signal: AbortSignal): AbortSignal {
+  return AbortSignal.any([signal, AbortSignal.timeout(HEALTH_TIMEOUT_MS)]);
+}
+
 export function useReactor(
   cluster: ClusterEntry,
   initial: ClusterStatus | null,
@@ -77,7 +83,8 @@ export function useReactor(
       if (healthPending || signal.aborted) return;
       healthPending = true;
       try {
-        const next = await rpc.services.health({ cluster: name }, { signal });
+        const bounded = healthSignal(signal);
+        const next = await rpc.services.health({ cluster: name }, { signal: bounded });
         if (!signal.aborted) setService(next);
       } catch {
         if (!signal.aborted)

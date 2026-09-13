@@ -47,6 +47,23 @@ describe("deriveReactorState", () => {
     expect(c458.metrics.gpuText).toBe("0%");
   });
 
+  it("uses visible labels for each model health state", () => {
+    const checking = deriveReactorState({ cluster: c032Entry });
+    const unavailable = deriveReactorState({
+      cluster: c032Entry,
+      service: { cluster: "c032", host: c032Entry.hosts[0], state: "unavailable", model: null },
+    });
+    const ready = deriveReactorState({
+      cluster: c032Entry,
+      service: { cluster: "c032", host: c032Entry.hosts[0], state: "ready", model: "qwen" },
+    });
+
+    expect(checking.serviceText).toBe("Checking model API");
+    expect(unavailable.serviceText).toBe("Model API unavailable");
+    expect(ready.serviceText).toBe("Model API ready");
+    expect(ready.modelText).toBe("qwen");
+  });
+
   it("labels a direct service with zero managed workloads", () => {
     expect(
       deriveReactorState({ cluster: c458Entry, status: emptyStatus }).managedWorkloadText,

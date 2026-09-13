@@ -35,10 +35,32 @@ describe("healthForCluster", () => {
       state: "ready",
       model: "qwen",
     });
-    expect(runSparkrunJson).toHaveBeenCalledWith(["cluster", "list", "--json"]);
+    const discoveryCall = vi.mocked(runSparkrunJson).mock.calls[0];
+    expect(discoveryCall[0]).toEqual(["cluster", "list", "--json"]);
+    expect(discoveryCall[1]).toEqual({ signal: expect.any(AbortSignal), timeoutMs: 3_000 });
+    const discoverySignal = (discoveryCall[1] as { signal: AbortSignal }).signal;
     expect(fetch).toHaveBeenCalledWith("http://100.83.161.109:8000/v1/models", {
-      signal: expect.any(AbortSignal),
+      signal: discoverySignal,
     });
+  });
+
+  it("combines the caller abort signal with the health deadline", async () => {
+    const caller = new AbortController();
+    vi.mocked(runSparkrunJson).mockResolvedValue(savedC458);
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "qwen" }] }),
+    } as Response);
+
+    await healthForCluster("c458", caller.signal);
+
+    const discoveryOptions = vi.mocked(runSparkrunJson).mock.calls[0][1] as {
+      signal: AbortSignal;
+      timeoutMs: number;
+    };
+    expect(discoveryOptions.timeoutMs).toBe(3_000);
+    expect(discoveryOptions.signal).not.toBe(caller.signal);
+    expect(discoveryOptions.signal.aborted).toBe(false);
   });
 
   it("returns unavailable when cluster not found", async () => {
@@ -48,6 +70,33 @@ describe("healthForCluster", () => {
 
     expect(result).toEqual({
       cluster: "missing",
+      host: null,
+      state: "unavailable",
+      model: null,
+    });
+  });
+
+  it("returns unavailable when saved-cluster discovery returns malformed data", async () => {
+    vi.mocked(runSparkrunJson).mockResolvedValue({ clusters: savedC458 });
+
+    const result = await healthForCluster("c458");
+
+    expect(result).toEqual({
+      cluster: "c458",
+      host: null,
+      state: "unavailable",
+      model: null,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns unavailable when saved-cluster discovery rejects", async () => {
+    vi.mocked(runSparkrunJson).mockRejectedValue(new Error("timed out"));
+
+    const result = await healthForCluster("c458");
+
+    expect(result).toEqual({
+      cluster: "c458",
       host: null,
       state: "unavailable",
       model: null,
