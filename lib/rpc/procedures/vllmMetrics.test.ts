@@ -16,6 +16,7 @@ function response(body: string, status = 200): Response {
 function deps(fetch: typeof globalThis.fetch): VllmCollectorDependencies {
   return {
     fetch,
+    listSavedClusters: async () => [],
     monotonicNow: () => 1_000,
     wallNow: () => 10_000,
     wait: (_ms, signal) =>
@@ -35,7 +36,7 @@ async function firstSnapshot(
   const iterator = streamClusterMetrics({ cluster }, controller.signal, registry, savedClusters);
   const next = await iterator.next();
   controller.abort();
-  await iterator.return?.();
+  await iterator.return?.(undefined);
   registry.stopAll();
   return next.value;
 }
@@ -71,7 +72,11 @@ describe("streamClusterMetrics", () => {
   it("returns unavailable without fetching for an unknown or empty saved cluster", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const missing = await firstSnapshot("missing", async () => [], fetch);
-    const empty = await firstSnapshot("empty", async () => [{ name: "empty", hosts: [] }], fetch);
+    const empty = await firstSnapshot(
+      "empty",
+      async () => [{ name: "empty", hosts: [], is_default: false }],
+      fetch,
+    );
 
     expect(missing).toMatchObject({ sourceHost: null, state: "unavailable" });
     expect(empty).toMatchObject({ sourceHost: null, state: "unavailable" });
@@ -80,7 +85,11 @@ describe("streamClusterMetrics", () => {
 
   it("uses a bracketed URL for a saved IPv6 leader", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response(text));
-    await firstSnapshot("v6", async () => [{ name: "v6", hosts: ["2001:db8::1"] }], fetch);
+    await firstSnapshot(
+      "v6",
+      async () => [{ name: "v6", hosts: ["2001:db8::1"], is_default: false }],
+      fetch,
+    );
     expect(fetch.mock.calls[0][0]).toBe("http://[2001:db8::1]:8000/metrics");
   });
 
@@ -92,7 +101,7 @@ describe("streamClusterMetrics", () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(result);
     const snapshot = await firstSnapshot(
       "c032",
-      async () => [{ name: "c032", hosts: ["host"] }],
+      async () => [{ name: "c032", hosts: ["host"], is_default: false }],
       fetch,
     );
     expect(snapshot).toMatchObject({ state: "unavailable", error, sourceHost: "host" });
@@ -104,7 +113,7 @@ describe("streamClusterMetrics", () => {
       .mockResolvedValue(response(`vllm:num_requests_running ${"1".repeat(1_000_001)}`));
     const snapshot = await firstSnapshot(
       "c032",
-      async () => [{ name: "c032", hosts: ["host"] }],
+      async () => [{ name: "c032", hosts: ["host"], is_default: false }],
       fetch,
     );
     expect(snapshot).toMatchObject({ state: "unavailable", error: "response too large" });
