@@ -127,7 +127,11 @@ export async function fetchVllmMetrics(
     throw new PollError("unreachable");
   }
 
-  if (response.status >= 300 && response.status < 400) {
+  if (
+    response.redirected ||
+    response.type === "opaqueredirect" ||
+    (response.status >= 300 && response.status < 400)
+  ) {
     throw new PollError("redirect rejected");
   }
   if (!response.ok) throw new PollError(`HTTP ${response.status}`);

@@ -107,6 +107,18 @@ describe("streamClusterMetrics", () => {
     expect(snapshot).toMatchObject({ state: "unavailable", error, sourceHost: "host" });
   });
 
+  it("rejects a response marked as redirected even when its status is successful", async () => {
+    const redirected = response(text);
+    Object.defineProperty(redirected, "redirected", { value: true });
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(redirected);
+    const snapshot = await firstSnapshot(
+      "c032",
+      async () => [{ name: "c032", hosts: ["host"], is_default: false }],
+      fetch,
+    );
+    expect(snapshot).toMatchObject({ state: "unavailable", error: "redirect rejected" });
+  });
+
   it("rejects an oversized metrics response", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()
