@@ -67,3 +67,18 @@ it("renders the aggregate overview metric treatment for every saved cluster, inc
     expect(html.match(new RegExp(`>${label}<`, "g")) ?? []).toHaveLength(3);
   }
 });
+
+it("stacks saved-cluster overview cards vertically at every viewport width", () => {
+  const html = renderToStaticMarkup(
+    createElement(ClusterOverviewSection, {
+      clusters: [
+        { name: "alpha", hosts: ["10.0.0.1"], is_default: true },
+        { name: "beta", hosts: ["10.0.0.2"], is_default: false },
+      ],
+    }),
+  );
+
+  expect(html).toContain('class="grid grid-cols-1 gap-4"');
+  expect(html).not.toContain("md:grid-cols-");
+  expect(html).not.toContain("xl:grid-cols-");
+});

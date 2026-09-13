@@ -20,7 +20,7 @@ export const ClusterOverviewSection = memo(function ClusterOverviewSection({
           </CardBody>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4">
           {clusters.map((cluster) => (
             <ClusterOverviewCard key={cluster.name} cluster={cluster} />
           ))}
