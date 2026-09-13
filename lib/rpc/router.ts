@@ -8,6 +8,7 @@ import * as logs from "./procedures/logs";
 import * as monitor from "./procedures/monitor";
 import * as chat from "./procedures/chat";
 import * as update from "./procedures/update";
+import * as services from "./procedures/services";
 
 export const router = {
   status: {
@@ -17,6 +18,9 @@ export const router = {
   workloads: {
     stop: workloads.stop,
     health: workloads.health,
+  },
+  services: {
+    health: services.health,
   },
   recipes: {
     list: recipes.list,
