@@ -2,9 +2,9 @@
 import { useEffect, useState } from "react";
 import { Thermometer, Zap } from "lucide-react";
 import { rpc } from "@/lib/rpc/client";
+import { MonitorTick, monitorHostViews } from "@/lib/monitor";
 
 type HostMetrics = Record<string, string | undefined>;
-type Tick = { timestamp: number; hosts: Record<string, HostMetrics> };
 
 function num(s: string | undefined): number {
   if (!s) return 0;
@@ -31,15 +31,16 @@ export function HeaderStats() {
         const iter = await rpc.monitor.stream({ intervalSec: 3 }, { signal: ac.signal });
         for await (const next of iter) {
           if (cancelled) break;
-          const tick = next as Tick;
-          const hosts = Object.values(tick.hosts);
+          const tick = next as MonitorTick;
+          const views = monitorHostViews(tick);
+          const samples = Object.values(views).flatMap((host) => (host.sample ? [host.sample] : []));
           let gpuSum = 0;
           let tempSum = 0;
-          for (const m of hosts) {
-            gpuSum += num(m.gpu_util_pct);
-            tempSum += num(m.gpu_temp_c);
+          for (const s of samples) {
+            gpuSum += num(s.gpu_util_pct);
+            tempSum += num(s.gpu_temp_c);
           }
-          const n = hosts.length || 1;
+          const n = samples.length || 1;
           setStats({
             gpuPct: gpuSum / n,
             gpuTempC: tempSum / n,

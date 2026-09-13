@@ -3,11 +3,12 @@ import { useEffect, useState } from "react";
 import { Card, CardBody } from "@/app/components/ui/Card";
 import { Badge } from "@/app/components/ui/Badge";
 import { rpc } from "@/lib/rpc/client";
+import { MonitorTick, monitorHostViews, MonitorHost } from "@/lib/monitor";
 import { HostCard, type HostHistory, type HostMetrics } from "./HostCard";
 
 const HISTORY_LIMIT = 30;
 
-type Tick = { timestamp: number; hosts: Record<string, HostMetrics> };
+type Tick = { timestamp: number; hosts: MonitorHost[] };
 
 function num(s: string | undefined): number {
   if (s == null || s === "") return 0;
@@ -29,16 +30,19 @@ export function MonitorLive() {
         setConnected(true);
         for await (const next of iter) {
           if (cancelled) break;
-          setTick(next as Tick);
+          const tick = next as MonitorTick;
+          setTick(tick);
           setHistory((prev) => {
+            const views = monitorHostViews(tick);
             const updated = { ...prev };
-            for (const [host, m] of Object.entries(next.hosts)) {
-              const h = updated[host] ?? { cpu: [], gpu: [], mem: [], power: [] };
+            for (const [host, h] of Object.entries(views)) {
+              const m = h.sample;
+              const hostHistory = updated[host] ?? { cpu: [], gpu: [], mem: [], power: [] };
               updated[host] = {
-                cpu: push(h.cpu, num((m as HostMetrics).cpu_usage_pct)),
-                gpu: push(h.gpu, num((m as HostMetrics).gpu_util_pct)),
-                mem: push(h.mem, num((m as HostMetrics).mem_used_pct)),
-                power: push(h.power, num((m as HostMetrics).gpu_power_w)),
+                cpu: push(hostHistory.cpu, num(m?.cpu_usage_pct)),
+                gpu: push(hostHistory.gpu, num(m?.gpu_util_pct)),
+                mem: push(hostHistory.mem, num(m?.mem_used_pct)),
+                power: push(hostHistory.power, num(m?.gpu_power_w)),
               };
             }
             return updated;
@@ -82,14 +86,17 @@ export function MonitorLive() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          {hosts.map(([host, metrics]) => (
-            <HostCard
-              key={host}
-              host={host}
-              metrics={metrics}
-              history={history[host] ?? { cpu: [], gpu: [], mem: [], power: [] }}
-            />
-          ))}
+          {hosts.map(([host, h]) => {
+            const metrics = h.sample || {};
+            return (
+              <HostCard
+                key={host}
+                host={host}
+                metrics={metrics}
+                history={history[host] ?? { cpu: [], gpu: [], mem: [], power: [] }}
+              />
+            );
+          })}
         </div>
       )}
     </div>
