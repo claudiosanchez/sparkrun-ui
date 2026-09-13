@@ -130,4 +130,23 @@ describe("streamClusterMetrics", () => {
     );
     expect(snapshot).toMatchObject({ state: "unavailable", error: "response too large" });
   });
+
+  it("keeps optional vLLM families field-level when the endpoint returns other valid metrics", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(response("process_cpu_seconds_total 1\n"));
+    const snapshot = await firstSnapshot(
+      "c032",
+      async () => [{ name: "c032", hosts: ["host"], is_default: false }],
+      fetch,
+    );
+    expect(snapshot).toMatchObject({
+      state: "live",
+      error: null,
+      metrics: {
+        tokensPerSecond: { value: null, state: "unavailable" },
+        runningRequests: { value: null, state: "unavailable" },
+      },
+    });
+  });
 });

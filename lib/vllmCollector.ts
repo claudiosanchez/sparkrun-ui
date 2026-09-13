@@ -189,7 +189,8 @@ async function pollEntry(
       parsed.generationTokenSeries === null &&
       parsed.runningRequests === null &&
       parsed.waitingRequests === null &&
-      parsed.kvCachePercent === null
+      parsed.kvCachePercent === null &&
+      !parsed.hasValidSamples
     ) {
       throw new PollError("invalid metrics");
     }

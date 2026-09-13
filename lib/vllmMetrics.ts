@@ -40,6 +40,7 @@ export type ParsedVllmMetrics = {
   waitingRequests: number | null;
   kvCachePercent: number | null;
   invalidFamilies: ReadonlySet<string>;
+  hasValidSamples: boolean;
 };
 
 function canonicalLabels(raw: string | undefined): string | null {
@@ -80,14 +81,19 @@ function canonicalLabels(raw: string | undefined): string | null {
 export function parseVllmMetrics(text: string): ParsedVllmMetrics {
   const samples = new Map<string, Array<{ key: string; value: number }>>();
   const invalidFamilies = new Set<string>();
+  let hasValidSamples = false;
 
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
 
     const family = trimmed.match(familyAtLineStart)?.[1];
-    if (!family || !allowed.has(family)) continue;
     const match = trimmed.match(sampleLine);
+    if (match) {
+      const genericValue = Number(match[3]);
+      if (Number.isFinite(genericValue) && genericValue >= 0) hasValidSamples = true;
+    }
+    if (!family || !allowed.has(family)) continue;
     if (!match || match[1] !== family) {
       invalidFamilies.add(family);
       continue;
@@ -138,6 +144,7 @@ export function parseVllmMetrics(text: string): ParsedVllmMetrics {
             ),
           ),
     invalidFamilies,
+    hasValidSamples,
   };
 }
 
