@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MonitorTickSchema } from "./monitor";
 import { ClusterStatusSchema, type ClusterEntry } from "./schemas";
 import { deriveReactorState } from "./reactorState";
+import { VllmClusterSnapshotSchema } from "./vllmMetrics";
 
 const c032Entry: ClusterEntry = { name: "c032", hosts: ["100.65.40.24"], is_default: true };
 const c458Entry: ClusterEntry = { name: "c458", hosts: ["100.83.161.109"], is_default: false };
@@ -25,8 +26,99 @@ const c458Tick = MonitorTickSchema.parse({
   hosts: [{ host: c458Entry.hosts[0], sample: { ...sample, gpu_util_pct: "0" } }],
 });
 const emptyStatus = ClusterStatusSchema.parse({ host_count: 1 });
+const vllm = VllmClusterSnapshotSchema.parse({
+  cluster: "c032",
+  polledAtMs: 50_000,
+  sourceHost: "100.65.40.24",
+  state: "live",
+  error: null,
+  metrics: {
+    tokensPerSecond: { value: 42.6, state: "live", observedAtMs: 50_000 },
+    runningRequests: { value: 1, state: "live", observedAtMs: 50_000 },
+    waitingRequests: { value: 0, state: "live", observedAtMs: 50_000 },
+    kvCachePercent: { value: 37.5, state: "live", observedAtMs: 50_000 },
+  },
+});
 
 describe("deriveReactorState", () => {
+  it("maps the original three rings to real sources", () => {
+    const state = deriveReactorState({ cluster: c032Entry, tick: c032Tick, vllm });
+
+    expect(state.rings).toMatchObject({
+      memory: { percent: 50, source: "sparkrun-monitor" },
+      kv: { percent: 37.5, source: "vllm-metrics" },
+      gpu: { percent: 70, source: "sparkrun-monitor" },
+    });
+    expect(state.inference).toMatchObject({
+      tokensPerSecondText: "42.6",
+      runningText: "1",
+      queuedText: "0",
+      clientsText: "—",
+      sessionsText: "—",
+    });
+  });
+
+  it("preserves a live zero and never fabricates client or session counts", () => {
+    const zero = VllmClusterSnapshotSchema.parse({
+      ...vllm,
+      metrics: {
+        ...vllm.metrics,
+        tokensPerSecond: { value: 0, state: "live", observedAtMs: 50_000 },
+        runningRequests: { value: 0, state: "live", observedAtMs: 50_000 },
+      },
+    });
+    const state = deriveReactorState({ cluster: c032Entry, vllm: zero });
+    expect(state.inference.tokensPerSecondText).toBe("0.0");
+    expect(state.inference.runningText).toBe("0");
+    expect(state.inference.clientsText).toBe("—");
+    expect(state.inference.sessionsText).toBe("—");
+  });
+
+  it.each([
+    ["warming", "Warming · calculating rate"],
+    ["reset", "Counter reset · calculating rate"],
+    ["unavailable", "Tokens per second unavailable"],
+  ] as const)("renders a null %s rate as an honest unavailable value", (metricState, text) => {
+    const snapshot = VllmClusterSnapshotSchema.parse({
+      ...vllm,
+      metrics: {
+        ...vllm.metrics,
+        tokensPerSecond: { value: null, state: metricState, observedAtMs: 50_000 },
+      },
+    });
+    const state = deriveReactorState({ cluster: c032Entry, vllm: snapshot });
+    expect(state.inference.tokensPerSecondText).toBe("—");
+    expect(state.inference.stateText).toBe(text);
+  });
+
+  it("keeps stale numbers while identifying their stale state", () => {
+    const stale = VllmClusterSnapshotSchema.parse({
+      ...vllm,
+      state: "stale",
+      error: "HTTP 503",
+      metrics: {
+        ...vllm.metrics,
+        tokensPerSecond: { value: 42.6, state: "stale", observedAtMs: 50_000 },
+      },
+    });
+    const state = deriveReactorState({ cluster: c032Entry, vllm: stale });
+    expect(state.inference.tokensPerSecondText).toBe("42.6");
+    expect(state.inference.stateText.toLowerCase()).toContain("stale");
+  });
+
+  it("keeps the KV ring unavailable without a reported KV value", () => {
+    const missingKv = VllmClusterSnapshotSchema.parse({
+      ...vllm,
+      metrics: {
+        ...vllm.metrics,
+        kvCachePercent: { value: null, state: "unavailable", observedAtMs: null },
+      },
+    });
+    const state = deriveReactorState({ cluster: c032Entry, tick: c032Tick, vllm: missingKv });
+    expect(state.rings.kv).toMatchObject({ percent: null, detail: "Capacity not reported" });
+    expect(state.rings.kv.detail).not.toContain("GPU");
+  });
+
   it("keeps C032 live when C458 model health is unavailable", () => {
     const c032 = deriveReactorState({
       cluster: c032Entry,

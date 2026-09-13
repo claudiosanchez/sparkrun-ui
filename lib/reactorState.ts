@@ -1,6 +1,7 @@
 import { monitorHostViews, numberMetric, type MonitorTick } from "./monitor";
 import type { ClusterEntry, ClusterStatus } from "./schemas";
 import type { ServiceHealth } from "./rpc/procedures/services";
+import type { VllmClusterSnapshot, VllmMetricState, VllmReading } from "./vllmMetrics";
 
 type ReactorInput = {
   cluster: ClusterEntry;
@@ -8,6 +9,8 @@ type ReactorInput = {
   tick?: MonitorTick | null;
   service?: ServiceHealth | null;
   reconnecting?: boolean;
+  vllm?: VllmClusterSnapshot | null;
+  vllmReconnecting?: boolean;
 };
 
 const metricKeys = [
@@ -28,6 +31,8 @@ export function deriveReactorState({
   tick,
   service,
   reconnecting = false,
+  vllm = null,
+  vllmReconnecting = false,
 }: ReactorInput) {
   const views = tick ? monitorHostViews(tick) : {};
   const hosts = cluster.hosts.map((host) => views[host]);
@@ -65,6 +70,50 @@ export function deriveReactorState({
   const managedWorkloadCount = status ? status.solo_entries.length : null;
   const cpuPercent = metric("cpu_usage_pct", true);
   const gpuPercent = metric("gpu_util_pct", true);
+  const memoryUsed = metric("mem_used_mb");
+  const memoryTotal = metric("mem_total_mb");
+  const memoryPercent =
+    memoryUsed === null || memoryTotal === null || memoryTotal <= 0
+      ? null
+      : (memoryUsed / memoryTotal) * 100;
+
+  const unavailableVllmReading: VllmReading = {
+    value: null,
+    state: "unavailable",
+    observedAtMs: null,
+  };
+  const effectiveState = (reading: VllmReading): VllmMetricState =>
+    vllmReconnecting && reading.state === "live" ? "stale" : reading.state;
+  const vllmReading = (key: keyof VllmClusterSnapshot["metrics"]): VllmReading =>
+    vllm?.metrics[key] ?? unavailableVllmReading;
+  const tokenReading = vllmReading("tokensPerSecond");
+  const rateState = effectiveState(tokenReading);
+  const rateText =
+    tokenReading.value === null ||
+    rateState === "warming" ||
+    rateState === "unavailable" ||
+    rateState === "reset"
+      ? "—"
+      : tokenReading.value.toFixed(1);
+  const rateStateText =
+    rateState === "warming"
+      ? "Warming · calculating rate"
+      : rateState === "reset"
+        ? "Counter reset · calculating rate"
+        : rateState === "stale"
+          ? "Stale · last value"
+          : rateState === "unavailable"
+            ? "Tokens per second unavailable"
+            : "Tokens per second live";
+  const requestText = (reading: VllmReading) => {
+    if (reading.value === null) return "—";
+    const value = Number.isInteger(reading.value)
+      ? String(reading.value)
+      : reading.value.toFixed(1);
+    return effectiveState(reading) === "stale" ? `${value} · stale` : value;
+  };
+  const kvReading = vllmReading("kvCachePercent");
+  const kvState = effectiveState(kvReading);
   return {
     name: cluster.name,
     hostText: cluster.hosts.join(", ") || "No hosts configured",
@@ -95,6 +144,37 @@ export function deriveReactorState({
       managedWorkloadCount === null
         ? "Managed workloads unavailable"
         : `${managedWorkloadCount} managed workload${managedWorkloadCount === 1 ? "" : "s"}`,
+    rings: {
+      memory: {
+        label: "Total unified memory",
+        percent: memoryPercent,
+        detail: memoryText("mem"),
+        source: "sparkrun-monitor" as const,
+      },
+      kv: {
+        label: "KV cache occupancy",
+        percent: kvReading.value,
+        detail: "Capacity not reported",
+        source: "vllm-metrics" as const,
+        state: kvState,
+      },
+      gpu: {
+        label: "GPU compute utilization",
+        percent: gpuPercent,
+        detail: metricsText(gpuPercent, "%"),
+        source: "sparkrun-monitor" as const,
+      },
+    },
+    inference: {
+      state: rateState,
+      stateText: rateStateText,
+      tokensPerSecond: tokenReading.value,
+      tokensPerSecondText: rateText,
+      runningText: requestText(vllmReading("runningRequests")),
+      queuedText: requestText(vllmReading("waitingRequests")),
+      clientsText: "—" as const,
+      sessionsText: "—" as const,
+    },
     trends: { cpu: [] as number[], gpu: [] as number[] },
     metrics: {
       cpuPercent,
@@ -108,6 +188,10 @@ export function deriveReactorState({
       powerText: text(metric("gpu_power_w"), " W", 1),
     },
   };
+}
+
+function metricsText(value: number | null, unit: string): string {
+  return value === null ? "—" : `${value.toFixed(1)}${unit}`;
 }
 
 export type ReactorState = ReturnType<typeof deriveReactorState>;

@@ -7,6 +7,7 @@ import { appendReactorTrend, type ReactorTrend } from "@/lib/reactorTrend";
 import type { MonitorTick } from "@/lib/monitor";
 import type { ClusterEntry, ClusterStatus } from "@/lib/schemas";
 import type { ServiceHealth } from "@/lib/rpc/procedures/services";
+import type { VllmClusterSnapshot } from "@/lib/vllmMetrics";
 
 export type ReactorStatusUpdate = (cluster: string, status: ClusterStatus) => void;
 
@@ -25,9 +26,11 @@ export function useReactor(
   const [status, setStatus] = useState(initial);
   const [tick, setTick] = useState<MonitorTick | null>(null);
   const [service, setService] = useState<ServiceHealth | null>(null);
+  const [vllm, setVllm] = useState<VllmClusterSnapshot | null>(null);
   const [trends, setTrends] = useState<ReactorTrend>({ cpu: [], gpu: [] });
   const [statusReconnecting, setStatusReconnecting] = useState(false);
   const [monitorReconnecting, setMonitorReconnecting] = useState(false);
+  const [vllmReconnecting, setVllmReconnecting] = useState(false);
   const name = cluster.name;
 
   useEffect(() => {
@@ -90,6 +93,11 @@ export function useReactor(
       },
       setMonitorReconnecting,
     );
+    void subscribe(
+      () => rpc.vllmMetrics.stream({ cluster: name }, { signal }),
+      setVllm,
+      setVllmReconnecting,
+    );
 
     let healthPending = false;
     async function checkHealth() {
@@ -122,9 +130,21 @@ export function useReactor(
         tick,
         service,
         reconnecting: statusReconnecting || monitorReconnecting,
+        vllm,
+        vllmReconnecting,
       }),
       trends,
     }),
-    [cluster, status, tick, service, statusReconnecting, monitorReconnecting, trends],
+    [
+      cluster,
+      status,
+      tick,
+      service,
+      vllm,
+      statusReconnecting,
+      monitorReconnecting,
+      vllmReconnecting,
+      trends,
+    ],
   );
 }

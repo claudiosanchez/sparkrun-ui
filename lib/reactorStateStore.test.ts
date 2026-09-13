@@ -14,6 +14,37 @@ function reactor(name: string): ReactorState {
     modelText: "test-model",
     managedWorkloadCount: 0,
     managedWorkloadText: "0 managed workloads",
+    rings: {
+      memory: {
+        label: "Total unified memory",
+        percent: 50,
+        detail: "1.0 / 2.0 GB",
+        source: "sparkrun-monitor",
+      },
+      kv: {
+        label: "KV cache occupancy",
+        percent: null,
+        detail: "Capacity not reported",
+        source: "vllm-metrics",
+        state: "unavailable",
+      },
+      gpu: {
+        label: "GPU compute utilization",
+        percent: 0,
+        detail: "0.0%",
+        source: "sparkrun-monitor",
+      },
+    },
+    inference: {
+      state: "unavailable",
+      stateText: "Tokens per second unavailable",
+      tokensPerSecond: null,
+      tokensPerSecondText: "—",
+      runningText: "—",
+      queuedText: "—",
+      clientsText: "—",
+      sessionsText: "—",
+    },
     trends: { cpu: [], gpu: [] },
     metrics: {
       cpuPercent: 0,
