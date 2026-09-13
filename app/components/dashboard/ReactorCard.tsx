@@ -2,19 +2,11 @@
 
 import { Card, CardBody, CardHeader, CardTitle } from "@/app/components/ui/Card";
 import { Badge } from "@/app/components/ui/Badge";
-import type { ClusterEntry, ClusterStatus } from "@/lib/schemas";
-import { useReactor, type ReactorStatusUpdate } from "./useReactor";
+import type { ClusterEntry } from "@/lib/schemas";
+import { useReactorState } from "./ReactorStateContext";
 
-export function ReactorCard({
-  cluster,
-  initial,
-  onStatus,
-}: {
-  cluster: ClusterEntry;
-  initial: ClusterStatus | null;
-  onStatus: ReactorStatusUpdate;
-}) {
-  const state = useReactor(cluster, initial, onStatus);
+export function ReactorCard({ cluster }: { cluster: ClusterEntry }) {
+  const state = useReactorState(cluster);
   const { metrics } = state;
   const gpu = metrics.gpuPercent === null ? null : Math.max(0, Math.min(100, metrics.gpuPercent));
   const measurements = [

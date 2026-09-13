@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { rpc } from "@/lib/rpc/client";
 import { deriveReactorState } from "@/lib/reactorState";
 import type { MonitorTick } from "@/lib/monitor";
@@ -101,11 +101,15 @@ export function useReactor(
     };
   }, [name, onStatus]);
 
-  return deriveReactorState({
-    cluster,
-    status,
-    tick,
-    service,
-    reconnecting: statusReconnecting || monitorReconnecting,
-  });
+  return useMemo(
+    () =>
+      deriveReactorState({
+        cluster,
+        status,
+        tick,
+        service,
+        reconnecting: statusReconnecting || monitorReconnecting,
+      }),
+    [cluster, status, tick, service, statusReconnecting, monitorReconnecting],
+  );
 }

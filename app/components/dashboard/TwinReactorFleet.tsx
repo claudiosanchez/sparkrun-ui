@@ -1,19 +1,10 @@
 "use client";
 
-import type { ClusterEntry, ClusterStatus } from "@/lib/schemas";
+import type { ClusterEntry } from "@/lib/schemas";
 import { Card, CardBody } from "@/app/components/ui/Card";
 import { ReactorCard } from "./ReactorCard";
-import type { ReactorStatusUpdate } from "./useReactor";
 
-export function TwinReactorFleet({
-  clusters,
-  initialStatuses,
-  onStatus,
-}: {
-  clusters: ClusterEntry[];
-  initialStatuses: Record<string, ClusterStatus | null>;
-  onStatus: ReactorStatusUpdate;
-}) {
+export function TwinReactorFleet({ clusters }: { clusters: ClusterEntry[] }) {
   const twin = clusters.length === 2;
   return (
     <section aria-label="Saved cluster fleet" className="relative">
@@ -31,12 +22,7 @@ export function TwinReactorFleet({
         }
       >
         {clusters.map((cluster) => (
-          <ReactorCard
-            key={cluster.name}
-            cluster={cluster}
-            initial={initialStatuses[cluster.name] ?? null}
-            onStatus={onStatus}
-          />
+          <ReactorCard key={cluster.name} cluster={cluster} />
         ))}
       </div>
       {clusters.length === 0 && (
