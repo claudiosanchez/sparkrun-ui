@@ -92,7 +92,7 @@ export function MonitorLive() {
                 <Card key={host}>
                   <CardBody className="text-sm text-zinc-500 dark:text-zinc-400">
                     <div className="font-semibold text-zinc-700 dark:text-zinc-300">{host}</div>
-                    <div className="mt-1">{h.error}</div>
+                    <div className="mt-1">{String(h.error)}</div>
                   </CardBody>
                 </Card>
               );
