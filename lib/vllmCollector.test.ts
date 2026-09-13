@@ -168,4 +168,12 @@ describe("fetchVllmMetrics", () => {
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(reader.releaseLock).toHaveBeenCalledTimes(1);
   });
+
+  it("sanitizes a fetch rejection caused by redirect blocking", async () => {
+    const fetcher = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new TypeError("redirect"));
+
+    await expect(fetchVllmMetrics("host", new AbortController().signal, fetcher)).rejects.toThrow(
+      "redirect rejected",
+    );
+  });
 });

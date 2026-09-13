@@ -133,6 +133,9 @@ export async function fetchVllmMetrics(
   } catch (error) {
     if (collectorSignal.aborted) throw error;
     if (signal.aborted && timeoutSignal.aborted) throw new PollError("timeout");
+    if (error instanceof Error && /redirect/i.test(error.message)) {
+      throw new PollError("redirect rejected");
+    }
     throw new PollError("unreachable");
   }
 
