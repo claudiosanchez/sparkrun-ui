@@ -7,6 +7,18 @@ cluster gets its own live reactor card. The current Coxshire configuration
 therefore shows C032 and C458 together. The Dashboard will not change the
 default cluster.
 
+### Superseding dashboard-composition decision
+
+Keep the existing **Cluster overview** aggregate card. It remains bound to
+Sparkrun's default cluster, currently C032. Add a separate **Clusters**
+overview section after it. That section renders one compact overview card for
+each entry from `sparkrun cluster list --json`.
+
+Keep the detailed Twin Reactor Fleet as a separate section below the new
+collection. No dashboard code may hard-code C032, C458, a host address, or a
+cluster count. A third saved cluster must appear in both dynamic sections
+without a UI change.
+
 This design keeps the existing Dashboard workload section. It adds a fleet
 section above it that makes host telemetry and model API health visible even
 when a model server was started outside Sparkrun.
@@ -144,9 +156,10 @@ two equal cards. On phones they stack in saved-cluster order and retain the
 same reading order. If more or fewer than two clusters are saved, the same
 component uses a responsive grid without the twin-only divider.
 
-The existing aggregate overview is replaced by the fleet stage. The workload
-section stays below it. Its summary combines per-cluster status so workloads
-from a non-default saved cluster remain visible.
+The existing aggregate overview stays first. The dynamic Clusters overview
+section follows it, then the detailed fleet. The workload section stays below
+them. Its summary combines per-cluster status so workloads from a non-default
+saved cluster remain visible.
 
 ## Data Flow
 
@@ -217,10 +230,10 @@ sparkrun cluster list --json
 
 ## Deployment Constraints
 
-- Keep this work on the local fork branch. Do not open, merge, or deploy a
-  pull request for this change.
-- Do not deploy to Coxshire without a separate explicit instruction from the
-  project owner.
+- Keep this work on the local fork branch. Do not open, merge, or push a pull
+  request for this change.
+- Deploy only committed, locally verified work. The project owner authorized
+  direct Coxshire deployment on 2026-09-13; record the deployed local commit.
 - If deployment is later requested, run the production server with the
   project-supported standalone entry point, not `next start` against an
   `output: standalone` build.
