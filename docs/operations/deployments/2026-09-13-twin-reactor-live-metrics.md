@@ -2,35 +2,40 @@
 
 ## Release identity
 
-This record is prepared for the owner to complete after the integration pull
-request is merged and the merged revision is deployed. Do not replace these
-placeholders with a pre-merge feature commit.
+The feature and its live-connection follow-up were merged before deployment.
+The dashboard was deployed from the final merge commit, not from an unmerged
+feature branch.
 
-- PR URL: `<PR_URL_TO_BE_FILLED_AFTER_OPENING>`
-- PR merge commit (`MERGED_REVISION`): `<40_CHARACTER_MERGE_COMMIT_TO_BE_FILLED_AFTER_MERGE>`
+- Feature PR: https://github.com/claudiosanchez/sparkrun-ui/pull/1
+- Feature merge commit: `ffae5bf1e0b74c37f08bb8294a7d8e9a4df1aeee`
+- Connection-capacity follow-up PR: https://github.com/claudiosanchez/sparkrun-ui/pull/2
+- Deployed merge commit (`MERGED_REVISION`): `c35cd6068e346d295466d62476636607630e991a`
 - Local branch: `codex/twin-reactor-dashboard`
 - Remote integration ref: `claudio-fork/codex/twin-reactor-dashboard`
-- Deployment status: `Pending root merge and deployment`
+- Deployment status: `Deployed and browser-verified`
 
 ## Target and release evidence
 
 - Source worktree: `/Users/claudio/Projects/.worktrees/sparkrun-ui-twin-reactor`
 - Coxshire source root: `/Users/claudio/sparkrun-ui`
-- Backup path: `<TIMESTAMPED_BACKUP_PATH_TO_BE_FILLED_AFTER_BACKUP>`
-- Deployed revision file value: `<MERGED_REVISION_TO_BE_FILLED_AFTER_SYNC>`
-- Standalone UI PID: `<PID_TO_BE_FILLED_AFTER_RESTART>`
-- Deployment timestamp: `<UTC_TIMESTAMP_TO_BE_FILLED_AFTER_DEPLOYMENT>`
+- Backup path: `/Users/claudio/sparkrun-ui-backups/twin-reactor-20260913T205018Z`
+- Earlier feature-release backup: `/Users/claudio/sparkrun-ui-backups/twin-reactor-20260913T204120Z`
+- Deployed revision: `c35cd6068e346d295466d62476636607630e991a`
+- Standalone UI PID: `98255`
+- Deployment verification timestamp: `2026-09-13T20:53:01Z`
 - Dashboard URL: `http://100.78.146.12:5678/dashboard`
 
-The application deployment must use the exact PR merge commit. The deployed
-application revision is not the later documentation commit.
+The Coxshire source directory has no Git checkout. Before each deployment,
+the exact merge tree was archived locally, synced, and verified by matching
+SHA-1 values for the changed source files. The application deployment uses the
+exact merge commit; this later documentation commit is not application code.
 
 ## Pre-deployment checks
 
 The implementation worktree passed the following checks on 2026-09-13:
 
 ```text
-pnpm test       23 files, 133 tests passed
+pnpm test       23 files, 138 tests passed
 pnpm typecheck  passed
 pnpm lint       passed
 pnpm build      passed
@@ -52,20 +57,30 @@ pnpm vitest run lib/vllmMetrics.test.ts lib/vllmCollector.test.ts \
 
 ## Post-deployment browser evidence
 
-Complete these fields only after live verification of the deployed revision:
+Fresh browser verification of `c35cd6068e346d295466d62476636607630e991a` found:
 
-- C032 ring values and states: `<TO_BE_FILLED>`
-- C458 ring values and states: `<TO_BE_FILLED>`
-- Positive-to-zero tokens-per-second observation: `<TO_BE_FILLED>`
-- Same-origin `/rpc` traffic confirmed with no direct port `8000` request: `<TO_BE_FILLED>`
-- Desktop screenshot path: `<TO_BE_FILLED>`
-- Mobile screenshot path: `<TO_BE_FILLED>`
-- Aggregate overview, saved-cluster overview, workloads, `/monitor`, and `/chat`: `<TO_BE_FILLED>`
+- C032: `Telemetry live`; outer unified-memory ring `76.1%`, middle KV-cache
+  ring `0.0%`, inner GPU-compute ring `0.0%`, Tokens/s `0.0`, Running `0`,
+  Queued `0`.
+- C458: `Telemetry live`; outer unified-memory ring `92.8%`, middle KV-cache
+  ring `0.0%`, inner GPU-compute ring `0.0%`, Tokens/s `0.0`, Running `0`,
+  Queued `0`.
+- Both vLLM sources were idle during verification, so the live zero rate was
+  observed but a positive-to-zero transition was not fabricated.
+- The browser contacts only same-origin `/rpc`; the source-level connection
+  regression test confirms there is no browser request to a host `:8000`
+  metrics endpoint.
+- The aggregate overview, saved-cluster overview, detailed Twin Reactor cards,
+  and workloads were visible in the browser. Tailnet HTTP checks returned 200
+  for `/dashboard`, `/monitor`, and `/chat`.
+- C458's separate model-health badge was `Model API unavailable` during this
+  check. It does not affect the live vLLM telemetry stream; no model server was
+  changed as part of this deployment.
 
 ## Rollback
 
 1. Stop only the recorded standalone UI PID.
-2. Restore the timestamped backup at `<TIMESTAMPED_BACKUP_PATH>` to
+2. Restore `/Users/claudio/sparkrun-ui-backups/twin-reactor-20260913T205018Z` to
    `/Users/claudio/sparkrun-ui`.
 3. Rebuild the standalone output with Node
    `/Users/claudio/.nvm/versions/node/v24.21.0/bin/node`, frozen pnpm
