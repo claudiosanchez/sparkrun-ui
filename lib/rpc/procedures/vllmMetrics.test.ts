@@ -78,8 +78,8 @@ describe("streamClusterMetrics", () => {
       fetch,
     );
 
-    expect(missing).toMatchObject({ sourceHost: null, state: "unavailable" });
-    expect(empty).toMatchObject({ sourceHost: null, state: "unavailable" });
+    expect(missing).toMatchObject({ sourceHost: null, state: "unavailable", error: null });
+    expect(empty).toMatchObject({ sourceHost: null, state: "unavailable", error: null });
     expect(fetch).not.toHaveBeenCalled();
   });
 

@@ -46,7 +46,11 @@ const productionDependencies: VllmCollectorDependencies = {
 };
 const productionRegistry = createVllmCollectorRegistry(productionDependencies);
 
-function unavailable(cluster: string, wallNow: () => number, error: string): VllmClusterSnapshot {
+function unavailable(
+  cluster: string,
+  wallNow: () => number,
+  error: string | null,
+): VllmClusterSnapshot {
   return unavailableClusterSnapshot(cluster, Math.max(0, Math.trunc(wallNow())), null, error);
 }
 
@@ -75,7 +79,7 @@ export async function* streamClusterMetrics(
   const savedCluster = savedClusters.find((entry) => entry.name === input.cluster);
   const leaderHost = savedCluster?.hosts[0]?.trim() ?? null;
   if (!leaderHost || !canUseSavedHost(leaderHost)) {
-    yield unavailable(input.cluster, wallNow, "unavailable");
+    yield unavailable(input.cluster, wallNow, null);
     return;
   }
 
