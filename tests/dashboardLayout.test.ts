@@ -4,6 +4,8 @@ import { expect, it } from "vitest";
 import { DashboardLive } from "@/app/components/dashboard/DashboardLive";
 import { ClusterOverviewSection } from "@/app/components/dashboard/ClusterOverviewSection";
 import { ClusterStatusSchema } from "@/lib/schemas";
+import { ReactorRings } from "@/app/components/dashboard/ReactorRings";
+import type { ReactorState } from "@/lib/reactorState";
 
 it("keeps the existing overview above the added reactor fleet and workload section", () => {
   const html = renderToStaticMarkup(
@@ -81,4 +83,68 @@ it("stacks saved-cluster overview cards vertically at every viewport width", () 
   expect(html).toContain('class="grid grid-cols-1 gap-4"');
   expect(html).not.toContain("md:grid-cols-");
   expect(html).not.toContain("xl:grid-cols-");
+});
+
+it("renders three accessible rings and honest inference fields", () => {
+  const html = renderToStaticMarkup(
+    createElement(DashboardLive, {
+      clusters: [{ name: "lab", hosts: ["127.0.0.1"], is_default: true }],
+      initialStatuses: { lab: ClusterStatusSchema.parse({ host_count: 1 }) },
+      recipeByCluster: new Map(),
+    }),
+  );
+  for (const label of [
+    "Total unified memory",
+    "KV cache occupancy",
+    "GPU compute utilization",
+    "Tokens / sec",
+    "Clients",
+    "Sessions",
+    "Running",
+    "Queued",
+  ]) {
+    expect(html).toContain(label);
+  }
+  expect(html.match(/role="progressbar"/g) ?? []).toHaveLength(3);
+  expect(html).toContain("Client and session counts are not collected");
+});
+
+it("preserves zero and renders unavailable KV without a numeric value", () => {
+  const rings: ReactorState["rings"] = {
+    memory: {
+      label: "Total unified memory",
+      percent: 0,
+      detail: "0.0 / 128.0 GB",
+      source: "sparkrun-monitor",
+    },
+    kv: {
+      label: "KV cache occupancy",
+      percent: null,
+      detail: "Capacity not reported",
+      source: "vllm-metrics",
+      state: "unavailable",
+    },
+    gpu: {
+      label: "GPU compute utilization",
+      percent: 0,
+      detail: "0.0%",
+      source: "sparkrun-monitor",
+    },
+  };
+  const inference: ReactorState["inference"] = {
+    state: "live",
+    stateText: "Tokens per second live",
+    tokensPerSecond: 0,
+    tokensPerSecondText: "0.0",
+    runningText: "0",
+    queuedText: "0",
+    clientsText: "—",
+    sessionsText: "—",
+  };
+  const html = renderToStaticMarkup(
+    createElement(ReactorRings, { rings, inference, modelText: "qwen" }),
+  );
+  expect(html).toContain('aria-valuenow="0"');
+  expect(html).toContain('aria-valuetext="Not reported"');
+  expect(html).not.toContain('aria-valuenow="37.5"');
 });

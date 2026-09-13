@@ -4,11 +4,11 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/app/components/ui/Card"
 import { Badge } from "@/app/components/ui/Badge";
 import type { ClusterEntry } from "@/lib/schemas";
 import { useReactorState } from "./ReactorStateContext";
+import { ReactorRings } from "./ReactorRings";
 
 export function ReactorCard({ cluster }: { cluster: ClusterEntry }) {
   const state = useReactorState(cluster);
   const { metrics } = state;
-  const gpu = metrics.gpuPercent === null ? null : Math.max(0, Math.min(100, metrics.gpuPercent));
   const measurements = [
     ["CPU utilization", metrics.cpuText],
     ["Unified memory", metrics.memoryText],
@@ -48,46 +48,12 @@ export function ReactorCard({ cluster }: { cluster: ClusterEntry }) {
           <Badge>{state.managedWorkloadText}</Badge>
         </div>
 
-        <div className="flex flex-col items-center gap-2 py-2">
-          <div className="relative flex h-44 w-44 items-center justify-center">
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 120 120"
-              className="absolute inset-0 h-full w-full -rotate-90"
-            >
-              <circle
-                cx="60"
-                cy="60"
-                r="52"
-                fill="none"
-                strokeWidth="5"
-                className="stroke-zinc-100 dark:stroke-zinc-800"
-              />
-              {gpu !== null && (
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="52"
-                  fill="none"
-                  strokeWidth="5"
-                  pathLength="100"
-                  strokeDasharray={`${gpu} 100`}
-                  strokeLinecap="round"
-                  className={
-                    state.telemetryState === "live"
-                      ? "stroke-sky-500 dark:stroke-sky-400"
-                      : "stroke-amber-500 dark:stroke-amber-400"
-                  }
-                />
-              )}
-            </svg>
-            <div className="text-center">
-              <p className="font-mono text-4xl font-semibold text-zinc-900 tabular-nums dark:text-zinc-100">
-                {metrics.gpuText}
-              </p>
-              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">GPU utilization</p>
-            </div>
-          </div>
+        <div className="flex flex-col gap-2 py-2">
+          <ReactorRings
+            rings={state.rings}
+            inference={state.inference}
+            modelText={state.modelText}
+          />
           <p aria-live="polite" className="text-center text-xs text-zinc-500 dark:text-zinc-400">
             {state.freshnessText}
           </p>
