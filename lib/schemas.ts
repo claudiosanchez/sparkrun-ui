@@ -69,18 +69,17 @@ export const RecipeValidateResultSchema = z.object({
 });
 export type RecipeValidateResult = z.infer<typeof RecipeValidateResultSchema>;
 
-export const MonitorTickSchema = z
-  .object({
-    host: z.string(),
-    ts: z.string().optional(),
-    cpu_pct: z.number().optional(),
-    ram_used_gb: z.number().optional(),
-    ram_total_gb: z.number().optional(),
-    gpu_pct: z.number().optional(),
-    gpu_mem_used_gb: z.number().optional(),
-    gpu_mem_total_gb: z.number().optional(),
-  })
-  .loose();
+export const MonitorSampleSchema = z.object({}).catchall(z.string());
+export const MonitorHostSchema = z.object({
+  host: z.string(),
+  error: z.unknown().nullable().default(null),
+  sample: MonitorSampleSchema.nullable().default(null),
+  workloads: z.array(z.unknown()).default([]),
+  used_slots: z.number().default(0),
+  free_slots: z.number().default(0),
+}).loose();
+export type MonitorHost = z.infer<typeof MonitorHostSchema>;
+export const MonitorTickSchema = z.object({ timestamp: z.number(), hosts: z.array(MonitorHostSchema) });
 export type MonitorTick = z.infer<typeof MonitorTickSchema>;
 
 export const ClusterEntrySchema = z.object({

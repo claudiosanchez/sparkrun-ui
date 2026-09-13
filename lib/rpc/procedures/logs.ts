@@ -1,11 +1,11 @@
 import { os, eventIterator } from "@orpc/server";
 import { z } from "zod";
-import { runSparkrunJson, streamSparkrunLines } from "@/lib/sparkrun";
-import type { ClusterStatus } from "@/lib/schemas";
-import { ClusterStatusSchema } from "@/lib/schemas";
+import { streamSparkrunLines } from "@/lib/sparkrun";
+import { fetchStatus } from "./status";
 
 const ARGS_INPUT = z.object({
   clusterId: z.string().regex(/^[a-zA-Z0-9_]+$/),
+  cluster: z.string().min(1).optional(),
   tail: z.number().int().min(0).max(10_000).default(200),
 });
 
@@ -15,9 +15,8 @@ const LogEventSchema = z.object({
   stream: z.enum(["out", "err", "meta"]).default("out"),
 });
 
-async function resolveHostsForCluster(clusterId: string): Promise<string[]> {
-  const raw = await runSparkrunJson<unknown>(["cluster", "status", "--json"]);
-  const status: ClusterStatus = ClusterStatusSchema.parse(raw);
+async function resolveHostsForCluster(clusterId: string, cluster?: string): Promise<string[]> {
+  const status = await fetchStatus(cluster);
   const w = status.solo_entries.find((e) => e.cluster_id === clusterId);
   if (!w) return [];
   if (w.meta.hosts?.length) return w.meta.hosts;
@@ -31,7 +30,7 @@ export const stream = os
   .handler(async function* ({ input, signal }) {
     const now = () => new Date().toISOString();
 
-    const hosts = await resolveHostsForCluster(input.clusterId);
+    const hosts = await resolveHostsForCluster(input.clusterId, input.cluster);
     if (!hosts.length) {
       yield {
         line: `[meta] Could not resolve hosts for ${input.clusterId} — is it still running?`,

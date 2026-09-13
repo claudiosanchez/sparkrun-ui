@@ -1,11 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { Cpu, MemoryStick, Server, Thermometer, Zap } from "lucide-react";
 import { Card, CardBody } from "@/app/components/ui/Card";
 import { rpc } from "@/lib/rpc/client";
-
-type HostMetrics = Record<string, string | undefined>;
-type Tick = { timestamp: number; hosts: Record<string, HostMetrics> };
+import { monitorHostViews, type MonitorTick } from "@/lib/monitor";
 
 const HISTORY = 40;
 
@@ -29,7 +27,7 @@ function num(s: string | undefined): number {
   return Number.isFinite(v) ? v : 0;
 }
 
-function aggregate(tick: Tick | null): Aggregate {
+function aggregate(tick: MonitorTick | null): Aggregate {
   if (!tick) {
     return {
       hostCount: 0,
@@ -45,7 +43,9 @@ function aggregate(tick: Tick | null): Aggregate {
       jobsTotal: 0,
     };
   }
-  const hosts = Object.values(tick.hosts);
+  const hosts = Object.values(monitorHostViews(tick)).flatMap((host) =>
+    host.error == null && host.sample ? [host.sample] : [],
+  );
   let cpuSum = 0;
   let gpuSum = 0;
   let memUsed = 0;
@@ -84,8 +84,8 @@ function aggregate(tick: Tick | null): Aggregate {
   };
 }
 
-export function AggregateStats() {
-  const [tick, setTick] = useState<Tick | null>(null);
+export const AggregateStats = memo(function AggregateStats() {
+  const [tick, setTick] = useState<MonitorTick | null>(null);
   const [hist, setHist] = useState<{ cpu: number[]; gpu: number[] }>({ cpu: [], gpu: [] });
   const [connected, setConnected] = useState(false);
 
@@ -98,8 +98,8 @@ export function AggregateStats() {
         setConnected(true);
         for await (const next of iter) {
           if (cancelled) break;
-          setTick(next as Tick);
-          const agg = aggregate(next as Tick);
+          setTick(next);
+          const agg = aggregate(next);
           setHist((prev) => ({
             cpu: push(prev.cpu, agg.cpuAvg),
             gpu: push(prev.gpu, agg.gpuAvg),
@@ -201,7 +201,7 @@ export function AggregateStats() {
       </CardBody>
     </Card>
   );
-}
+});
 
 function push(arr: number[], v: number): number[] {
   const next = arr.concat(v);

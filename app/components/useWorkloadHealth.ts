@@ -7,14 +7,19 @@ export type WorkloadHealth = Health | { ready: false; state: "loading"; reason?:
 
 // Poll the workload's readiness endpoint until it reports ready, then keep
 // polling so we catch the workload going unhealthy.
-export function useWorkloadHealth(clusterId: string | null | undefined): WorkloadHealth {
+export function useWorkloadHealth(
+  clusterId: string | null | undefined,
+  cluster?: string,
+): WorkloadHealth {
   const [polled, setPolled] = useState<Health | null>(null);
   const [prevId, setPrevId] = useState<string | null | undefined>(clusterId);
+  const [prevCluster, setPrevCluster] = useState(cluster);
 
   // Reset polled state when the tracked cluster changes (docs-blessed
   // "adjusting state during render" pattern).
-  if (clusterId !== prevId) {
+  if (clusterId !== prevId || cluster !== prevCluster) {
     setPrevId(clusterId);
+    setPrevCluster(cluster);
     setPolled(null);
   }
 
@@ -25,7 +30,7 @@ export function useWorkloadHealth(clusterId: string | null | undefined): Workloa
 
     const tick = async () => {
       try {
-        const res = await rpc.workloads.health({ clusterId }, { signal: ac.signal });
+        const res = await rpc.workloads.health({ clusterId, cluster }, { signal: ac.signal });
         if (!cancelled) setPolled(res);
       } catch {
         // Network blip — keep the last known state.
@@ -39,7 +44,7 @@ export function useWorkloadHealth(clusterId: string | null | undefined): Workloa
       ac.abort();
       clearInterval(interval);
     };
-  }, [clusterId]);
+  }, [clusterId, cluster]);
 
   return polled ?? { ready: false, state: "loading" };
 }

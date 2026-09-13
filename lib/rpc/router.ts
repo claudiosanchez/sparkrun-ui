@@ -8,6 +8,8 @@ import * as logs from "./procedures/logs";
 import * as monitor from "./procedures/monitor";
 import * as chat from "./procedures/chat";
 import * as update from "./procedures/update";
+import * as services from "./procedures/services";
+import * as vllmMetrics from "./procedures/vllmMetrics";
 
 export const router = {
   status: {
@@ -17,6 +19,9 @@ export const router = {
   workloads: {
     stop: workloads.stop,
     health: workloads.health,
+  },
+  services: {
+    health: services.health,
   },
   recipes: {
     list: recipes.list,
@@ -46,6 +51,9 @@ export const router = {
   },
   monitor: {
     stream: monitor.stream,
+  },
+  vllmMetrics: {
+    stream: vllmMetrics.stream,
   },
   chat: {
     stream: chat.stream,

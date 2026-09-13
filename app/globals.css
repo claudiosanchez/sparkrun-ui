@@ -52,6 +52,22 @@ body {
   isolation: isolate;
 }
 
+.ambient-background {
+  background:
+    radial-gradient(circle at 18% 20%, rgb(56 189 248 / 7%), transparent 38%),
+    radial-gradient(circle at 78% 16%, rgb(168 85 247 / 6%), transparent 35%),
+    radial-gradient(circle at 58% 82%, rgb(16 185 129 / 5%), transparent 42%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .ambient-background {
+    background:
+      radial-gradient(circle at 18% 20%, rgb(56 189 248 / 8%), transparent 38%),
+      radial-gradient(circle at 78% 16%, rgb(168 85 247 / 7%), transparent 35%),
+      radial-gradient(circle at 58% 82%, rgb(16 185 129 / 6%), transparent 42%);
+  }
+}
+
 button:not(:disabled),
 [role="button"]:not([aria-disabled="true"]),
 [role="tab"],

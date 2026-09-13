@@ -3,21 +3,34 @@ import { z } from "zod";
 import { ClusterStatusSchema, type ClusterStatus } from "@/lib/schemas";
 import { runSparkrunJson } from "@/lib/sparkrun";
 
-async function fetchStatus(): Promise<ClusterStatus> {
-  const raw = await runSparkrunJson<unknown>(["cluster", "status", "--json"]);
+const StatusInputSchema = z
+  .object({
+    cluster: z.string().min(1).optional(),
+    intervalMs: z.number().int().min(500).max(30_000).optional(),
+  })
+  .optional();
+
+export async function fetchStatus(cluster?: string): Promise<ClusterStatus> {
+  const args = ["cluster", "status"];
+  if (cluster) args.push("--cluster", cluster);
+  args.push("--json");
+  const raw = await runSparkrunJson<unknown>(args);
   return ClusterStatusSchema.parse(raw);
 }
 
-export const get = os.output(ClusterStatusSchema).handler(fetchStatus);
+export const get = os
+  .input(StatusInputSchema)
+  .output(ClusterStatusSchema)
+  .handler(({ input }) => fetchStatus(input?.cluster));
 
 export const stream = os
-  .input(z.object({ intervalMs: z.number().int().min(500).max(30_000).default(3000) }).optional())
+  .input(StatusInputSchema)
   .output(eventIterator(ClusterStatusSchema))
   .handler(async function* ({ input, signal }) {
     const interval = input?.intervalMs ?? 3000;
     while (!signal?.aborted) {
       try {
-        yield await fetchStatus();
+        yield await fetchStatus(input?.cluster);
       } catch (err) {
         console.error("[status.stream]", err);
       }

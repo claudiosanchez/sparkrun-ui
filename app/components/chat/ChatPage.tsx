@@ -13,9 +13,11 @@ type Message = { role: "user" | "assistant"; content: string };
 export function ChatPage({
   initial,
   initialClusterId,
+  cluster,
 }: {
   initial: ClusterStatus;
   initialClusterId?: string;
+  cluster?: string;
 }) {
   const [status, setStatus] = useState<ClusterStatus>(initial);
   const [explicitClusterId, setExplicitClusterId] = useState<string | null>(
@@ -46,7 +48,7 @@ export function ChatPage({
       ? explicitClusterId
       : (instances[0]?.value ?? null);
   const selectedInstance = instances.find((i) => i.value === selectedClusterId) ?? null;
-  const health = useWorkloadHealth(selectedClusterId);
+  const health = useWorkloadHealth(selectedClusterId, cluster);
   const isReady = health.ready;
   const hasConversation = messages.length > 0;
 
@@ -56,7 +58,7 @@ export function ChatPage({
     let cancelled = false;
     (async () => {
       try {
-        const iter = await rpc.status.stream({ intervalMs: 5000 }, { signal: ac.signal });
+        const iter = await rpc.status.stream({ cluster, intervalMs: 5000 }, { signal: ac.signal });
         for await (const next of iter) {
           if (cancelled) break;
           setStatus(next);
@@ -69,7 +71,7 @@ export function ChatPage({
       cancelled = true;
       ac.abort();
     };
-  }, []);
+  }, [cluster]);
 
   // Auto-scroll the window when new content arrives, but only if the user is
   // already near the bottom — otherwise reading older messages while a long
@@ -128,6 +130,7 @@ export function ChatPage({
       const iter = await rpc.chat.stream(
         {
           clusterId: selectedClusterId,
+          cluster,
           messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
         },
         { signal: ac.signal },

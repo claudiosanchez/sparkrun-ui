@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { MonitorTickSchema } from "./schemas";
 import {
   ClusterEntrySchema,
   ClusterStatusSchema,
-  MonitorTickSchema,
   RecipeListSchema,
   RecipeValidateResultSchema,
 } from "./schemas";
@@ -74,11 +74,9 @@ describe("schemas parse real sparkrun --json fixtures", () => {
     for (const line of lines) {
       const obj = JSON.parse(line);
       expect(typeof obj.timestamp).toBe("number");
-      expect(typeof obj.hosts).toBe("object");
-      // Per-host metrics should parse as our flexible (loose) schema
-      for (const host of Object.values(obj.hosts as Record<string, unknown>)) {
-        MonitorTickSchema.parse({ host: "x", ...(host as object) });
-      }
+      expect(Array.isArray(obj.hosts)).toBe(true);
+      // Validate the whole MonitorTickSchema per line
+      MonitorTickSchema.parse(obj);
     }
   });
 
