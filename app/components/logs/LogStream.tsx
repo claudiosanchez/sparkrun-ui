@@ -39,7 +39,15 @@ function classesFor(seg: AnsiSegment): string {
   return out.join(" ");
 }
 
-export function LogStream({ clusterId, tail = 200 }: { clusterId: string; tail?: number }) {
+export function LogStream({
+  clusterId,
+  cluster,
+  tail = 200,
+}: {
+  clusterId: string;
+  cluster?: string;
+  tail?: number;
+}) {
   const [lines, setLines] = useState<Line[]>([]);
   const [follow, setFollow] = useState(true);
   const [connected, setConnected] = useState(false);
@@ -52,7 +60,7 @@ export function LogStream({ clusterId, tail = 200 }: { clusterId: string; tail?:
       setLines([]);
       setConnected(false);
       try {
-        const iter = await rpc.logs.stream({ clusterId, tail }, { signal: ac.signal });
+        const iter = await rpc.logs.stream({ clusterId, cluster, tail }, { signal: ac.signal });
         setConnected(true);
         for await (const event of iter) {
           if (cancelled) break;
@@ -73,7 +81,7 @@ export function LogStream({ clusterId, tail = 200 }: { clusterId: string; tail?:
       cancelled = true;
       ac.abort();
     };
-  }, [clusterId, tail]);
+  }, [clusterId, cluster, tail]);
 
   useEffect(() => {
     if (!follow || !scrollRef.current) return;

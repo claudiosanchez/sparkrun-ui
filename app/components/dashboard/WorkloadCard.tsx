@@ -15,15 +15,20 @@ import { parseWorkloadUptime } from "@/lib/workloadStatus";
 
 export function WorkloadCard({
   workload,
+  cluster,
   recipe,
 }: {
   workload: Workload;
+  cluster?: string;
   recipe?: RunningRecipeDisplay;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const health = useWorkloadHealth(workload.cluster_id);
+  const health = useWorkloadHealth(workload.cluster_id, cluster);
+  const chatQuery = new URLSearchParams({ clusterId: workload.cluster_id });
+  if (cluster) chatQuery.set("cluster", cluster);
+  const logsQuery = cluster ? `?cluster=${encodeURIComponent(cluster)}` : "";
 
   const label = workload.meta.model || workload.meta.recipe || workload.cluster_id;
   const uptime = parseWorkloadUptime(workload.status);
@@ -94,14 +99,14 @@ export function WorkloadCard({
           </dl>
           <div className="flex justify-end gap-2 pt-2">
             {workload.host && workload.meta.port && (
-              <Link href={`/chat?clusterId=${encodeURIComponent(workload.cluster_id)}`}>
+              <Link href={`/chat?${chatQuery}`}>
                 <Button variant="ghost" size="sm">
                   <MessageSquare size={14} />
                   Chat
                 </Button>
               </Link>
             )}
-            <Link href={`/logs/${workload.cluster_id}`}>
+            <Link href={`/logs/${workload.cluster_id}${logsQuery}`}>
               <Button variant="ghost" size="sm">
                 <ScrollText size={14} />
                 Logs

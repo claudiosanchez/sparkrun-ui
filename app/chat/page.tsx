@@ -6,8 +6,17 @@ export const dynamic = "force-dynamic";
 export default async function ChatRoute({
   searchParams,
 }: {
-  searchParams: Promise<{ clusterId?: string }>;
+  searchParams: Promise<{ clusterId?: string; cluster?: string }>;
 }) {
-  const [initial, sp] = await Promise.all([serverClient.status.get(), searchParams]);
-  return <ChatPage initial={initial} initialClusterId={sp.clusterId} />;
+  const sp = await searchParams;
+  const cluster = sp.cluster || undefined;
+  const initial = await serverClient.status.get({ cluster });
+  return (
+    <ChatPage
+      key={JSON.stringify([cluster, sp.clusterId])}
+      initial={initial}
+      initialClusterId={sp.clusterId}
+      cluster={cluster}
+    />
+  );
 }

@@ -128,6 +128,7 @@ export function DashboardLive({
             {workloads.map(({ cluster, workload: w }) => (
               <WorkloadCard
                 key={`${cluster}:${w.cluster_id}`}
+                cluster={cluster}
                 workload={w}
                 recipe={recipeByCluster.get(w.cluster_id)}
               />
