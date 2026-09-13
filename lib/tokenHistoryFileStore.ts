@@ -19,22 +19,32 @@ type StoredObservation = TokenObservation & {
   tier: "sample" | "minute";
 };
 
-type MinuteAccumulator = {
-  atMs: number;
-  latestAtMs: number;
-  cluster: string;
-  fingerprint: string;
-  weightedSum: number;
-  validWeight: number;
-};
-
 type ClusterState = {
-  entries: StoredObservation[];
+  rollingEntries: StoredObservation[];
+  dailyEntriesByDay: Map<string, Map<string, StoredObservation>>;
   loaded: boolean;
   degraded: boolean;
 };
 
+export type TokenHistoryFileSystem = {
+  mkdir(path: string, options: { recursive: true }): Promise<unknown>;
+  readFile(path: string, encoding: "utf8"): Promise<string>;
+  readdir(path: string): Promise<string[]>;
+  rename(oldPath: string, newPath: string): Promise<void>;
+  unlink(path: string): Promise<void>;
+  writeFile(path: string, data: string, encoding: "utf8"): Promise<void>;
+};
+
 let temporaryFileSequence = 0;
+
+const nativeFileSystem: TokenHistoryFileSystem = {
+  mkdir: async (path, options) => mkdir(path, options),
+  readFile: async (path, encoding) => readFile(path, encoding),
+  readdir: async (path) => readdir(path),
+  rename: async (oldPath, newPath) => rename(oldPath, newPath),
+  unlink: async (path) => unlink(path),
+  writeFile: async (path, data, encoding) => writeFile(path, data, encoding),
+};
 
 function hashIdentifier(identifier: string): string {
   return createHash("sha256").update(identifier).digest("hex");
@@ -51,7 +61,7 @@ function validateIdentifier(value: string, label: "cluster" | "fingerprint"): st
 }
 
 function validateObservation(observation: TokenObservation): void {
-  if (!observation || !Number.isFinite(observation.atMs)) {
+  if (!observation || !Number.isSafeInteger(observation.atMs) || observation.atMs < 0) {
     throw new Error("Invalid token observation");
   }
   validateIdentifier(observation.cluster, "cluster");
@@ -67,6 +77,12 @@ function validateObservation(observation: TokenObservation): void {
     (!Number.isFinite(observation.weight) || observation.weight <= 0)
   ) {
     throw new Error("Invalid observation weight");
+  }
+  if (
+    observation.latestAtMs !== undefined &&
+    (!Number.isSafeInteger(observation.latestAtMs) || observation.latestAtMs < observation.atMs)
+  ) {
+    throw new Error("Invalid observation timestamp");
   }
 }
 
@@ -98,15 +114,19 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function parseStoredValue(value: unknown, cluster: string): StoredObservation | null {
   if (!isObject(value)) return null;
+  if (value.kind !== "sample" && value.kind !== "minute") return null;
   const source = isObject(value.observation) ? value.observation : value;
   if (
     typeof source.atMs !== "number" ||
-    !Number.isFinite(source.atMs) ||
+    !Number.isSafeInteger(source.atMs) ||
+    source.atMs < 0 ||
     source.cluster !== cluster ||
     typeof source.fingerprint !== "string" ||
     source.fingerprint.length === 0 ||
     (source.latestAtMs !== undefined &&
-      (typeof source.latestAtMs !== "number" || !Number.isFinite(source.latestAtMs))) ||
+      (typeof source.latestAtMs !== "number" ||
+        !Number.isSafeInteger(source.latestAtMs) ||
+        source.latestAtMs < source.atMs)) ||
     (source.tokensPerSecond !== null && typeof source.tokensPerSecond !== "number")
   ) {
     return null;
@@ -114,6 +134,13 @@ function parseStoredValue(value: unknown, cluster: string): StoredObservation | 
   if (
     source.tokensPerSecond !== null &&
     (!Number.isFinite(source.tokensPerSecond) || source.tokensPerSecond < 0)
+  ) {
+    return null;
+  }
+  if (
+    value.kind === "minute" &&
+    (source.atMs % MINUTE_MS !== 0 ||
+      (source.latestAtMs !== undefined && source.latestAtMs >= source.atMs + MINUTE_MS))
   ) {
     return null;
   }
@@ -133,16 +160,16 @@ function parseStoredValue(value: unknown, cluster: string): StoredObservation | 
     tokensPerSecond: source.tokensPerSecond,
     ...(weight === undefined ? {} : { weight }),
     ...(source.latestAtMs === undefined ? {} : { latestAtMs: source.latestAtMs }),
-    tier: value.kind === "minute" ? "minute" : "sample",
+    tier: value.kind,
   };
 }
 
 function likelyTruncated(line: string): boolean {
   const trimmed = line.trim();
-  if (trimmed.length === 0) return false;
   return (
-    (trimmed.startsWith("{") && !trimmed.endsWith("}")) ||
-    (trimmed.startsWith("[") && !trimmed.endsWith("]"))
+    trimmed.startsWith("{") &&
+    !trimmed.endsWith("}") &&
+    /"kind"\s*:\s*"(?:sample|minute)"/.test(trimmed)
   );
 }
 
@@ -189,62 +216,92 @@ function serializeObservation(entry: StoredObservation): string {
   });
 }
 
-async function removeIfPresent(path: string): Promise<void> {
+async function removeIfPresent(fileSystem: TokenHistoryFileSystem, path: string): Promise<void> {
   try {
-    await unlink(path);
+    await fileSystem.unlink(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
 
-async function writeAtomically(path: string, content: string): Promise<void> {
+async function writeAtomically(
+  fileSystem: TokenHistoryFileSystem,
+  path: string,
+  content: string,
+): Promise<void> {
   const temporaryPath = `${path}.tmp-${process.pid}-${temporaryFileSequence++}`;
   try {
-    await writeFile(temporaryPath, content, "utf8");
-    await rename(temporaryPath, path);
+    await fileSystem.writeFile(temporaryPath, content, "utf8");
+    await fileSystem.rename(temporaryPath, path);
   } catch (error) {
-    await removeIfPresent(temporaryPath).catch(() => undefined);
+    await removeIfPresent(fileSystem, temporaryPath).catch(() => undefined);
     throw error;
   }
 }
 
-function minuteAggregates(entries: StoredObservation[]): StoredObservation[] {
-  const aggregates = new Map<string, MinuteAccumulator>();
-  for (const entry of entries) {
-    const atMs = Math.floor(entry.atMs / MINUTE_MS) * MINUTE_MS;
-    const key = `${entry.fingerprint}\u0000${atMs}`;
-    let aggregate = aggregates.get(key);
-    if (!aggregate) {
-      aggregate = {
-        atMs,
-        latestAtMs: entry.latestAtMs ?? entry.atMs,
-        cluster: entry.cluster,
-        fingerprint: entry.fingerprint,
-        weightedSum: 0,
-        validWeight: 0,
-      };
-      aggregates.set(key, aggregate);
-    }
-    aggregate.latestAtMs = Math.max(aggregate.latestAtMs, entry.latestAtMs ?? entry.atMs);
-    if (entry.tokensPerSecond !== null) {
-      const weight = entry.weight ?? 1;
-      aggregate.weightedSum += entry.tokensPerSecond * weight;
-      aggregate.validWeight += weight;
-    }
-  }
+function minuteAtMs(atMs: number): number {
+  return Math.floor(atMs / MINUTE_MS) * MINUTE_MS;
+}
 
-  return [...aggregates.values()]
-    .sort((a, b) => a.atMs - b.atMs || a.fingerprint.localeCompare(b.fingerprint))
-    .map((aggregate) => ({
-      atMs: aggregate.atMs,
-      cluster: aggregate.cluster,
-      fingerprint: aggregate.fingerprint,
-      tokensPerSecond:
-        aggregate.validWeight > 0 ? aggregate.weightedSum / aggregate.validWeight : null,
-      ...(aggregate.validWeight > 0 ? { weight: aggregate.validWeight } : {}),
-      latestAtMs: aggregate.latestAtMs,
-      tier: "minute" as const,
-    }));
+function minuteKey(fingerprint: string, atMs: number): string {
+  return `${fingerprint}\u0000${atMs}`;
+}
+
+function validWeight(entry: StoredObservation): number {
+  if (entry.tokensPerSecond === null) return 0;
+  return entry.weight ?? 1;
+}
+
+function mergeMinuteEntries(
+  left: StoredObservation | undefined,
+  right: StoredObservation,
+  atMs: number,
+): StoredObservation {
+  const leftWeight = left ? validWeight(left) : 0;
+  const rightWeight = validWeight(right);
+  const totalWeight = leftWeight + rightWeight;
+  const weightedSum =
+    (left?.tokensPerSecond ?? 0) * leftWeight + (right.tokensPerSecond ?? 0) * rightWeight;
+  const latestAtMs = Math.max(
+    left?.latestAtMs ?? left?.atMs ?? atMs,
+    right.latestAtMs ?? right.atMs,
+  );
+  return {
+    atMs,
+    cluster: right.cluster,
+    fingerprint: right.fingerprint,
+    tokensPerSecond: totalWeight > 0 ? weightedSum / totalWeight : null,
+    ...(totalWeight > 0 ? { weight: totalWeight } : {}),
+    latestAtMs,
+    tier: "minute",
+  };
+}
+
+function addDailyEntry(
+  dailyEntriesByDay: Map<string, Map<string, StoredObservation>>,
+  entry: StoredObservation,
+): string {
+  const atMs = minuteAtMs(entry.atMs);
+  const day = utcDay(atMs);
+  const entries = dailyEntriesByDay.get(day) ?? new Map<string, StoredObservation>();
+  const key = minuteKey(entry.fingerprint, atMs);
+  const normalized: StoredObservation = {
+    ...entry,
+    atMs,
+    tier: "minute",
+    latestAtMs: entry.latestAtMs ?? entry.atMs,
+  };
+  entries.set(key, mergeMinuteEntries(entries.get(key), normalized, atMs));
+  dailyEntriesByDay.set(day, entries);
+  return day;
+}
+
+function flattenDailyEntries(
+  dailyEntriesByDay: Map<string, Map<string, StoredObservation>>,
+): StoredObservation[] {
+  const entries: StoredObservation[] = [];
+  for (const dayEntries of dailyEntriesByDay.values()) entries.push(...dayEntries.values());
+  return entries;
 }
 
 function unavailableResult(cluster: string, range: TrendRange, nowMs: number): TokenHistoryResult {
@@ -273,9 +330,11 @@ function unavailableResult(cluster: string, range: TrendRange, nowMs: number): T
 export function createTokenHistoryFileStore({
   dataDir,
   now,
+  fileSystem = nativeFileSystem,
 }: {
   dataDir: string;
   now: () => number;
+  fileSystem?: TokenHistoryFileSystem;
 }): TokenHistoryStore {
   const clusters = new Map<string, ClusterState>();
   let queue = Promise.resolve();
@@ -294,68 +353,166 @@ export function createTokenHistoryFileStore({
     let state = clusters.get(cluster);
     if (state?.loaded) return state;
     if (!state) {
-      state = { entries: [], loaded: false, degraded: false };
+      state = {
+        rollingEntries: [],
+        dailyEntriesByDay: new Map(),
+        loaded: false,
+        degraded: false,
+      };
       clusters.set(cluster, state);
     }
 
-    await mkdir(dataDir, { recursive: true });
-    const files = await readdir(dataDir);
-    const rollingName = `rolling-${hashIdentifier(cluster)}.ndjson`;
-    const prefix = dayPrefix(cluster);
-    const matchingFiles = files
-      .filter((file) => file === rollingName || isDayFile(file, prefix))
-      .sort();
+    const rollingEntries: StoredObservation[] = [];
+    const dailyEntriesByDay = new Map<string, Map<string, StoredObservation>>();
+    let degraded = false;
+    try {
+      await fileSystem.mkdir(dataDir, { recursive: true });
+      const files = await fileSystem.readdir(dataDir);
+      const rollingName = `rolling-${hashIdentifier(cluster)}.ndjson`;
+      const prefix = dayPrefix(cluster);
+      const matchingFiles = files
+        .filter((file) => file === rollingName || isDayFile(file, prefix))
+        .sort();
 
-    for (const file of matchingFiles) {
-      const content = await readFile(join(dataDir, file), "utf8");
-      const parsed = parseNdjson(content, cluster);
-      state.entries.push(...parsed.entries);
-      state.degraded ||= parsed.degraded;
+      for (const file of matchingFiles) {
+        const content = await fileSystem.readFile(join(dataDir, file), "utf8");
+        const parsed = parseNdjson(content, cluster);
+        degraded ||= parsed.degraded;
+        if (file === rollingName) {
+          rollingEntries.push(...parsed.entries);
+        } else {
+          for (const entry of parsed.entries) addDailyEntry(dailyEntriesByDay, entry);
+        }
+      }
+
+      const deduplicatedRolling = rollingEntries.filter((entry) => {
+        const atMs = minuteAtMs(entry.atMs);
+        const aggregate = dailyEntriesByDay
+          .get(utcDay(atMs))
+          ?.get(minuteKey(entry.fingerprint, atMs));
+        if (!aggregate) return true;
+        return (entry.latestAtMs ?? entry.atMs) > (aggregate.latestAtMs ?? aggregate.atMs);
+      });
+
+      state.rollingEntries = deduplicatedRolling;
+      state.dailyEntriesByDay = dailyEntriesByDay;
+      state.degraded = degraded;
+      state.loaded = true;
+      return state;
+    } catch (error) {
+      state.rollingEntries = [];
+      state.dailyEntriesByDay.clear();
+      state.degraded = false;
+      state.loaded = false;
+      throw error;
     }
-    state.loaded = true;
-    return state;
+  }
+
+  function sameObservation(left: StoredObservation, right: StoredObservation): boolean {
+    return (
+      left.tier === right.tier &&
+      left.atMs === right.atMs &&
+      left.cluster === right.cluster &&
+      left.fingerprint === right.fingerprint &&
+      left.tokensPerSecond === right.tokensPerSecond &&
+      left.weight === right.weight &&
+      left.latestAtMs === right.latestAtMs
+    );
+  }
+
+  function sameObservationList(left: StoredObservation[], right: StoredObservation[]): boolean {
+    return (
+      left.length === right.length &&
+      left.every((entry, index) => sameObservation(entry, right[index]))
+    );
   }
 
   async function persistCluster(
     cluster: string,
     state: ClusterState,
     nowMs: number,
+    forceRollingWrite = false,
   ): Promise<void> {
     const retentionCutoff = nowMs - DAILY_RETENTION_MS;
     const rollingCutoff = nowMs - ROLLING_RETENTION_MS;
-    const retained = state.entries.filter((entry) => entry.atMs >= retentionCutoff);
-    const rollingEntries = retained.filter((entry) => entry.atMs >= rollingCutoff);
-    const dailyEntries = minuteAggregates(retained.filter((entry) => entry.atMs < rollingCutoff));
-    state.entries = [...rollingEntries, ...dailyEntries];
+    const compactBeforeMs = minuteAtMs(rollingCutoff);
+    const rollingEntries = state.rollingEntries.filter(
+      (entry) => entry.atMs >= retentionCutoff && minuteAtMs(entry.atMs) >= compactBeforeMs,
+    );
+    const entriesToCompact = state.rollingEntries.filter(
+      (entry) => entry.atMs >= retentionCutoff && minuteAtMs(entry.atMs) < compactBeforeMs,
+    );
+    const pendingDailyEntries = new Map(state.dailyEntriesByDay);
+    const copiedDays = new Set<string>();
+    const changedDays = new Set<string>();
+
+    function mutableDay(day: string): Map<string, StoredObservation> {
+      if (!copiedDays.has(day)) {
+        pendingDailyEntries.set(day, new Map(state.dailyEntriesByDay.get(day)));
+        copiedDays.add(day);
+      }
+      return pendingDailyEntries.get(day)!;
+    }
+
+    for (const entry of entriesToCompact) {
+      const day = utcDay(minuteAtMs(entry.atMs));
+      mutableDay(day);
+      addDailyEntry(pendingDailyEntries, entry);
+      changedDays.add(day);
+    }
+
+    const retentionDay = utcDay(retentionCutoff);
+    for (const day of [...pendingDailyEntries.keys()]) {
+      if (day < retentionDay) {
+        pendingDailyEntries.delete(day);
+        changedDays.add(day);
+        continue;
+      }
+      if (day !== retentionDay) continue;
+      const current = pendingDailyEntries.get(day);
+      if (!current) continue;
+      const retainedDay = new Map(
+        [...current.entries()].filter(
+          ([, entry]) => (entry.latestAtMs ?? entry.atMs) >= retentionCutoff,
+        ),
+      );
+      if (retainedDay.size !== current.size) {
+        if (retainedDay.size === 0) pendingDailyEntries.delete(day);
+        else pendingDailyEntries.set(day, retainedDay);
+        changedDays.add(day);
+      }
+    }
+
+    await fileSystem.mkdir(dataDir, { recursive: true });
+    for (const day of [...changedDays].sort()) {
+      const entries = pendingDailyEntries.get(day);
+      if (!entries || entries.size === 0) {
+        await removeIfPresent(fileSystem, dayPath(dataDir, cluster, day));
+        continue;
+      }
+      const content =
+        [...entries.values()]
+          .sort(
+            (left, right) =>
+              left.atMs - right.atMs || left.fingerprint.localeCompare(right.fingerprint),
+          )
+          .map(serializeObservation)
+          .join("\n") + "\n";
+      await writeAtomically(fileSystem, dayPath(dataDir, cluster, day), content);
+    }
 
     const rollingFile = rollingPath(dataDir, cluster);
-    if (rollingEntries.length === 0) {
-      await removeIfPresent(rollingFile);
-    } else {
-      const content = rollingEntries.map(serializeObservation).join("\n") + "\n";
-      await writeAtomically(rollingFile, content);
+    if (forceRollingWrite || !sameObservationList(state.rollingEntries, rollingEntries)) {
+      if (rollingEntries.length === 0) {
+        await removeIfPresent(fileSystem, rollingFile);
+      } else {
+        const content = rollingEntries.map(serializeObservation).join("\n") + "\n";
+        await writeAtomically(fileSystem, rollingFile, content);
+      }
     }
 
-    await mkdir(dataDir, { recursive: true });
-    const files = await readdir(dataDir);
-    const prefix = dayPrefix(cluster);
-    const byDay = new Map<string, StoredObservation[]>();
-    for (const entry of dailyEntries) {
-      const day = utcDay(entry.atMs);
-      const dayEntries = byDay.get(day) ?? [];
-      dayEntries.push(entry);
-      byDay.set(day, dayEntries);
-    }
-
-    const existingDayFiles = files.filter((file) => isDayFile(file, prefix));
-    for (const file of existingDayFiles) {
-      const day = file.slice(prefix.length, -".ndjson".length);
-      if (!byDay.has(day)) await removeIfPresent(join(dataDir, file));
-    }
-    for (const [day, entries] of byDay) {
-      const content = entries.map(serializeObservation).join("\n") + "\n";
-      await writeAtomically(dayPath(dataDir, cluster, day), content);
-    }
+    state.rollingEntries = rollingEntries;
+    state.dailyEntriesByDay = pendingDailyEntries;
   }
 
   return {
@@ -363,11 +520,19 @@ export function createTokenHistoryFileStore({
       return enqueue(async () => {
         if (closed) throw new Error("Token history store is closed");
         validateObservation(observation);
-        const state = await loadCluster(observation.cluster);
-        state.entries.push({ ...observation, tier: "sample" });
         const nowMs = now();
         if (!Number.isFinite(nowMs)) throw new Error("Invalid token history clock");
-        await persistCluster(observation.cluster, state, nowMs);
+        const state = await loadCluster(observation.cluster);
+        state.rollingEntries.push({ ...observation, tier: "sample" });
+        try {
+          await persistCluster(observation.cluster, state, nowMs, true);
+        } catch (error) {
+          state.rollingEntries = [];
+          state.dailyEntriesByDay.clear();
+          state.degraded = false;
+          state.loaded = false;
+          throw error;
+        }
       });
     },
 
@@ -384,13 +549,28 @@ export function createTokenHistoryFileStore({
 
         try {
           const state = await loadCluster(query.cluster);
-          return aggregateTokenHistory(state.entries, {
+          await persistCluster(query.cluster, state, nowMs);
+          const entries = [
+            ...state.rollingEntries,
+            ...flattenDailyEntries(state.dailyEntriesByDay),
+          ];
+          const result = aggregateTokenHistory(entries, {
             cluster: query.cluster,
             range: query.range,
             nowMs,
             degraded: state.degraded,
           });
+          if (state.degraded && result.state === "empty")
+            return { ...result, state: "unavailable" };
+          return result;
         } catch {
+          const state = clusters.get(query.cluster);
+          if (state) {
+            state.rollingEntries = [];
+            state.dailyEntriesByDay.clear();
+            state.degraded = false;
+            state.loaded = false;
+          }
           return unavailableResult(query.cluster, query.range, nowMs);
         }
       });
