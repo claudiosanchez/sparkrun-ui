@@ -1,0 +1,169 @@
+"use client";
+
+import { memo } from "react";
+import type { ClusterEntry } from "@/lib/schemas";
+import type { TrendRange } from "@/lib/tokenHistory";
+import { Badge } from "@/app/components/ui/Badge";
+import { Button } from "@/app/components/ui/Button";
+import { Card, CardBody, CardHeader, CardTitle } from "@/app/components/ui/Card";
+import { summarizeTokenHistory } from "./tokenHistoryData";
+import { TokenHistoryChart } from "./TokenHistoryChart";
+import { useTokenHistory, type TokenHistoryQueryState } from "./useTokenHistory";
+
+export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
+  cluster,
+  range,
+}: {
+  cluster: ClusterEntry;
+  range: TrendRange;
+}) {
+  const query = useTokenHistory(cluster.name, range);
+  const hasResult = query.result !== null;
+  const isLoading = query.isInitialLoading || query.isRefreshing;
+  const displayedRange = query.displayedRange ?? query.result?.range ?? null;
+  const unavailable = !hasResult || query.result?.state === "unavailable";
+  const requestFailed = query.error !== null;
+
+  let badge: { label: string; tone: "neutral" | "green" | "amber" | "red" };
+  if (!hasResult && query.isInitialLoading) {
+    badge = { label: "Loading history", tone: "neutral" };
+  } else if (unavailable || requestFailed) {
+    badge = { label: "History unavailable", tone: "red" };
+  } else if (query.result?.state === "partial") {
+    badge = { label: "Partial history", tone: "amber" };
+  } else if (query.result?.state === "empty") {
+    badge = { label: "Collecting history", tone: "neutral" };
+  } else {
+    badge = { label: "Ready", tone: "green" };
+  }
+
+  return (
+    <Card className="min-w-0">
+      <CardHeader className="flex-row items-center justify-between gap-3">
+        <CardTitle className="truncate">{cluster.name}</CardTitle>
+        <Badge tone={badge.tone}>{badge.label}</Badge>
+      </CardHeader>
+      <CardBody>
+        {hasResult && !unavailable ? (
+          <HistoryContent
+            clusterName={cluster.name}
+            query={query}
+            isLoading={isLoading}
+            displayedRange={displayedRange}
+          />
+        ) : hasResult && query.result?.state === "unavailable" ? (
+          <UnavailableContent query={query} hasCachedResult />
+        ) : query.isInitialLoading ? (
+          <div
+            className="flex h-56 items-center justify-center rounded-md bg-zinc-50 text-sm text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400"
+            aria-busy="true"
+          >
+            Loading persisted token history…
+          </div>
+        ) : (
+          <UnavailableContent query={query} hasCachedResult={false} />
+        )}
+      </CardBody>
+    </Card>
+  );
+});
+
+function HistoryContent({
+  clusterName,
+  query,
+  isLoading,
+  displayedRange,
+}: {
+  clusterName: string;
+  query: TokenHistoryQueryState;
+  isLoading: boolean;
+  displayedRange: TrendRange | null;
+}) {
+  const result = query.result;
+  if (result === null) return null;
+
+  if (result.state === "empty") {
+    return (
+      <div className="flex h-56 flex-col items-center justify-center gap-2 rounded-md bg-zinc-50 px-4 text-center text-sm text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400">
+        <p>No token throughput samples have been collected for this range.</p>
+        <p>Collection will populate this chart when the cluster reports Tokens/s.</p>
+        {isLoading && <LoadingRangeNote query={query} displayedRange={displayedRange} />}
+      </div>
+    );
+  }
+
+  const summary = summarizeTokenHistory(result);
+  const chartLabel = `${clusterName} token throughput history, ${result.range}`;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <TokenHistoryChart clusterName={clusterName} result={result} ariaLabel={chartLabel} />
+      <div className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+        <p>
+          Latest: {formatTokensPerSecond(summary.latest)} · Average:{" "}
+          {formatTokensPerSecond(summary.average)}
+        </p>
+        <p>
+          Min–max: {formatTokensPerSecond(summary.minimum)} –{" "}
+          {formatTokensPerSecond(summary.maximum)}
+        </p>
+        <p>
+          Coverage: {Math.round(result.coverage * 100)}% · Freshness:{" "}
+          {formatFreshness(summary.latestAtMs, query.isStale)}
+        </p>
+        {isLoading && <LoadingRangeNote query={query} displayedRange={displayedRange} />}
+        {query.error !== null && <p className="text-red-700 dark:text-red-300">{query.error}</p>}
+      </div>
+    </div>
+  );
+}
+
+function UnavailableContent({
+  query,
+  hasCachedResult,
+}: {
+  query: TokenHistoryQueryState;
+  hasCachedResult: boolean;
+}) {
+  return (
+    <div className="flex min-h-32 flex-col items-start gap-3 text-sm text-zinc-600 dark:text-zinc-400">
+      <p>
+        {hasCachedResult
+          ? "Token history is unavailable for the requested range. The previous result is retained when possible."
+          : "Token history is unavailable for this cluster right now."}
+      </p>
+      {query.error !== null && <p className="text-red-700 dark:text-red-300">{query.error}</p>}
+      <Button type="button" size="sm" onClick={query.retry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+function LoadingRangeNote({
+  query,
+  displayedRange,
+}: {
+  query: TokenHistoryQueryState;
+  displayedRange: TrendRange | null;
+}) {
+  if (!query.isRefreshing || displayedRange === null) return null;
+  return (
+    <p aria-live="polite" className="text-xs text-amber-700 dark:text-amber-300">
+      Loading {query.requestedRange}; showing {displayedRange}
+    </p>
+  );
+}
+
+function formatTokensPerSecond(value: number | null): string {
+  return value === null ? "—" : `${value.toFixed(1)} Tokens/s`;
+}
+
+function formatFreshness(atMs: number | null, stale: boolean): string {
+  if (atMs === null) return "No samples yet";
+  const timestamp = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(atMs));
+  return `${timestamp}${stale ? " · stale" : ""}`;
+}

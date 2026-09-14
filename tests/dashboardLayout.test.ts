@@ -56,6 +56,35 @@ it("renders every saved cluster in a separate overview section", () => {
   );
 });
 
+it("places token throughput history after the fleet for every saved cluster", () => {
+  const clusters = ["alpha", "beta", "gamma"].map((name, index) => ({
+    name,
+    hosts: [`10.0.0.${index + 1}`],
+    is_default: index === 0,
+  }));
+  const html = renderToStaticMarkup(
+    createElement(DashboardLive, {
+      clusters,
+      initialStatuses: Object.fromEntries(
+        clusters.map((cluster) => [cluster.name, ClusterStatusSchema.parse({ host_count: 1 })]),
+      ),
+      recipeByCluster: new Map(),
+    }),
+  );
+  const overviewIndex = html.indexOf('aria-label="Saved cluster overview"');
+  const fleetIndex = html.indexOf('aria-label="Saved cluster fleet"');
+  const historyIndex = html.indexOf('aria-label="Token throughput history"');
+  const workloadsIndex = html.indexOf(">Workloads</h2>");
+
+  expect(overviewIndex).toBeGreaterThanOrEqual(0);
+  expect(fleetIndex).toBeGreaterThan(overviewIndex);
+  expect(historyIndex).toBeGreaterThan(fleetIndex);
+  expect(workloadsIndex).toBeGreaterThan(historyIndex);
+  const historyHtml = html.slice(historyIndex, workloadsIndex);
+  for (const name of ["alpha", "beta", "gamma"]) expect(historyHtml).toContain(name);
+  expect(historyHtml).toContain('class="grid grid-cols-1 gap-4 lg:grid-cols-2"');
+});
+
 it("renders the aggregate overview metric treatment for every saved cluster, including a third", () => {
   const clusters = ["alpha", "beta", "gamma"].map((name, index) => ({
     name,
