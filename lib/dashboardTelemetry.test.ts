@@ -123,15 +123,29 @@ describe("dashboard telemetry broker", () => {
     await subscription.return();
   });
 
-  it("does not let a same-key live event replace the cached first event", async () => {
+  it("replaces a cached source with its latest live value without moving other keys", async () => {
     const broker = createDashboardTelemetryBroker();
-    const cached = publishVllm(broker, "c032", 10);
-    const subscription = broker.subscribe();
-    const live = publishVllm(broker, "c032", 20);
+    publishVllm(broker, "c032", 10);
+    const c458 = publishVllm(broker, "c458", 40);
+    const controller = new AbortController();
+    const subscription = broker.subscribe(controller.signal);
+    publishVllm(broker, "c032", 20);
+    const latestLive = publishVllm(broker, "c032", 30);
 
-    await expect(subscription.next()).resolves.toEqual({ value: cached, done: false });
-    await expect(subscription.next()).resolves.toEqual({ value: live, done: false });
-    await subscription.return();
+    expect(subscription.pendingEventCount).toBe(2);
+    await expect(subscription.next()).resolves.toEqual({ value: latestLive, done: false });
+    await expect(subscription.next()).resolves.toEqual({ value: c458, done: false });
+    expect(subscription.pendingEventCount).toBe(0);
+
+    let thirdReadSettled = false;
+    const thirdRead = subscription.next().then((result) => {
+      thirdReadSettled = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(thirdReadSettled).toBe(false);
+    controller.abort();
+    await expect(thirdRead).resolves.toEqual({ value: undefined, done: true });
   });
 
   it("assigns increasing process-local revisions and does not leak payload mutations", async () => {
@@ -162,6 +176,144 @@ describe("dashboard telemetry broker", () => {
     });
     await firstSubscription.return();
     await secondSubscription.return();
+  });
+
+  it("deeply isolates nested status data from publishers and other subscribers", async () => {
+    const broker = createDashboardTelemetryBroker();
+    const nested = { value: 1 };
+    broker.publish({
+      topic: "status",
+      cluster: "c032",
+      observedAtMs: 10_000,
+      payload: {
+        groups: { reactor: nested },
+        solo_entries: [],
+        idle_hosts: [],
+        pending_ops: [],
+        errors: {},
+        total_containers: 0,
+        host_count: 1,
+      },
+    });
+    nested.value = 99;
+
+    const firstSubscription = broker.subscribe();
+    const secondSubscription = broker.subscribe();
+    const first = await firstSubscription.next();
+    const second = await secondSubscription.next();
+    if (!first.done && first.value.topic === "status") {
+      (first.value.payload.groups.reactor as { value: number }).value = 777;
+    }
+
+    expect(second.value).toMatchObject({
+      topic: "status",
+      payload: { groups: { reactor: { value: 1 } } },
+    });
+    await firstSubscription.return();
+    await secondSubscription.return();
+  });
+
+  it("deeply isolates nested monitor workload data", async () => {
+    const broker = createDashboardTelemetryBroker();
+    const nested = { value: 1 };
+    broker.publish({
+      topic: "monitor",
+      cluster: "c032",
+      observedAtMs: 10_000,
+      payload: {
+        timestamp: 10_000,
+        hosts: [
+          {
+            host: "c032.local",
+            error: null,
+            sample: null,
+            workloads: [{ details: nested }],
+            used_slots: 0,
+            free_slots: 1,
+          },
+        ],
+      },
+    });
+    nested.value = 99;
+
+    const subscription = broker.subscribe();
+    const event = await subscription.next();
+
+    expect(event.value).toMatchObject({
+      topic: "monitor",
+      payload: { hosts: [{ workloads: [{ details: { value: 1 } }] }] },
+    });
+    await subscription.return();
+  });
+
+  it.each([
+    [
+      "cyclic data",
+      () => {
+        const value: Record<string, unknown> = {};
+        value.self = value;
+        return value;
+      },
+    ],
+    ["bigint data", () => ({ value: BigInt(1) })],
+    ["undefined data", () => ({ value: undefined })],
+    ["a Map", () => new Map([["value", 1]])],
+    ["a custom toJSON object", () => new Date(0)],
+    [
+      "a sparse array",
+      () => {
+        const value: unknown[] = [];
+        value.length = 1;
+        return value;
+      },
+    ],
+  ])("rejects non-serializable status payloads containing %s", (_name, createValue) => {
+    const broker = createDashboardTelemetryBroker();
+
+    expect(() =>
+      broker.publish({
+        topic: "status",
+        cluster: "c032",
+        observedAtMs: 10_000,
+        payload: {
+          groups: { reactor: createValue() },
+          solo_entries: [],
+          idle_hosts: [],
+          pending_ops: [],
+          errors: {},
+          total_containers: 0,
+          host_count: 1,
+        },
+      }),
+    ).toThrow(/wire-safe/i);
+  });
+
+  it("does not consume a revision when a non-serializable event is rejected", () => {
+    const broker = createDashboardTelemetryBroker();
+    const first = publishVllm(broker, "c032", 10);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    expect(() =>
+      broker.publish({
+        topic: "status",
+        cluster: "c032",
+        observedAtMs: 10_000,
+        payload: {
+          groups: { reactor: cyclic },
+          solo_entries: [],
+          idle_hosts: [],
+          pending_ops: [],
+          errors: {},
+          total_containers: 0,
+          host_count: 1,
+        },
+      }),
+    ).toThrow(/wire-safe/i);
+    const second = publishVllm(broker, "c032", 20);
+
+    expect(first.revision).toBe(1);
+    expect(second.revision).toBe(2);
   });
 
   it("closes idempotently, unblocks a waiting read, and removes the listener", async () => {
