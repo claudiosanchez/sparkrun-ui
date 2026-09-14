@@ -83,6 +83,15 @@ it("places token throughput history after the fleet for every saved cluster", ()
   const historyHtml = html.slice(historyIndex, workloadsIndex);
   for (const name of ["alpha", "beta", "gamma"]) expect(historyHtml).toContain(name);
   expect(historyHtml).toContain('class="grid grid-cols-1 gap-4 lg:grid-cols-2"');
+  expect(historyHtml).toContain('role="tablist" aria-label="Token throughput range"');
+  expect(historyHtml.match(/role="tab"/g) ?? []).toHaveLength(4);
+  for (const range of ["15m", "1d", "7d", "30d"]) {
+    expect(historyHtml).toContain(`>${range}`);
+  }
+  expect(historyHtml).toContain('id="token-history-tab-15m"');
+  expect(historyHtml).toContain('aria-selected="true"');
+  expect(historyHtml).toContain('role="tabpanel"');
+  expect(historyHtml).toContain('aria-labelledby="token-history-tab-15m"');
 });
 
 it("renders the aggregate overview metric treatment for every saved cluster, including a third", () => {
