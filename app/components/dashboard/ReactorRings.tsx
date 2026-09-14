@@ -7,41 +7,50 @@ type RingKey = keyof ReactorState["rings"];
 
 const ringOrder: Array<{
   key: RingKey;
-  color: string;
-  track: string;
+  radius: number;
 }> = [
-  { key: "memory", color: "stroke-emerald-500 dark:stroke-emerald-400", track: "r-[54]" },
-  { key: "kv", color: "stroke-cyan-500 dark:stroke-cyan-400", track: "r-[42]" },
-  { key: "gpu", color: "stroke-sky-500 dark:stroke-sky-400", track: "r-[30]" },
+  { key: "kv", radius: 54 },
+  { key: "active", radius: 42 },
+  { key: "queue", radius: 30 },
 ];
+
+const toneClasses: Record<RingValue["tone"], { dot: string; stroke: string }> = {
+  success: {
+    dot: "bg-emerald-500 dark:bg-emerald-400",
+    stroke: "stroke-emerald-500 dark:stroke-emerald-400",
+  },
+  info: {
+    dot: "bg-sky-500 dark:bg-sky-400",
+    stroke: "stroke-sky-500 dark:stroke-sky-400",
+  },
+  warning: {
+    dot: "bg-amber-500 dark:bg-amber-400",
+    stroke: "stroke-amber-500 dark:stroke-amber-400",
+  },
+  pressure: {
+    dot: "bg-orange-500 dark:bg-orange-400",
+    stroke: "stroke-orange-500 dark:stroke-orange-400",
+  },
+  critical: {
+    dot: "bg-rose-500 dark:bg-rose-400",
+    stroke: "stroke-rose-500 dark:stroke-rose-400",
+  },
+  neutral: {
+    dot: "bg-zinc-500 dark:bg-zinc-400",
+    stroke: "stroke-zinc-500 dark:stroke-zinc-400",
+  },
+};
 
 function clampPercent(value: number | null): number | null {
   return value === null ? null : Math.max(0, Math.min(100, value));
 }
 
-function ringColor(key: RingKey, state: ReactorState["rings"]["kv"]["state"] | undefined): string {
-  if (key === "kv" && (state === "unavailable" || state === "warming")) {
-    return "stroke-zinc-300 dark:stroke-zinc-600";
-  }
-  return ringOrder.find((ring) => ring.key === key)!.color;
+function ringValueText(ring: RingValue): string {
+  return ring.percent === null ? ring.status : `${ring.percent.toFixed(1)}% · ${ring.status}`;
 }
 
-function ReactorRing({
-  ring,
-  color,
-  radius,
-  stale = false,
-}: {
-  ring: RingValue;
-  color: string;
-  radius: number;
-  stale?: boolean;
-}) {
-  const value = clampPercent(ring.percent);
-  const accessibleValue =
-    value === null
-      ? `Not reported${stale ? " · stale" : ""}`
-      : `${value.toFixed(1)}%${stale ? " · stale" : ""}`;
+function ReactorRing({ ring, radius }: { ring: RingValue; radius: number }) {
+  const visualPercent = clampPercent(ring.percent);
   return (
     <circle
       cx="60"
@@ -50,15 +59,15 @@ function ReactorRing({
       fill="none"
       strokeWidth={radius === 54 ? 5 : radius === 42 ? 6 : 7}
       pathLength="100"
-      strokeDasharray={value === null ? "0 100" : `${value} 100`}
+      strokeDasharray={visualPercent === null ? "0 100" : `${visualPercent} 100`}
       strokeLinecap="round"
-      className={`${color} transition-[stroke-dasharray] duration-500 motion-reduce:transition-none`}
+      className={`${toneClasses[ring.tone].stroke} transition-[stroke-dasharray] duration-500 motion-reduce:transition-none`}
       role="progressbar"
       aria-label={ring.label}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={value === null ? undefined : value}
-      aria-valuetext={accessibleValue}
+      aria-valuenow={visualPercent === null ? undefined : visualPercent}
+      aria-valuetext={ringValueText(ring)}
     />
   );
 }
@@ -76,25 +85,16 @@ export function ReactorRings({
         <dl className="order-1 grid grid-cols-1 gap-2 sm:order-2 sm:min-w-44">
           {ringOrder.map(({ key }) => {
             const ring = rings[key];
-            const stale = key === "kv" && rings.kv.state === "stale";
             return (
               <div key={ring.label} className="flex items-start gap-2">
                 <span
                   aria-hidden="true"
-                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                    key === "memory"
-                      ? "bg-emerald-500"
-                      : key === "kv"
-                        ? "bg-cyan-500"
-                        : "bg-sky-500"
-                  }`}
+                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${toneClasses[ring.tone].dot}`}
                 />
                 <div className="min-w-0">
                   <dt className="text-xs text-zinc-500 dark:text-zinc-400">{ring.label}</dt>
                   <dd className="font-mono text-sm font-medium text-zinc-900 tabular-nums dark:text-zinc-100">
-                    {ring.percent === null
-                      ? `—${stale ? " · stale" : ""}`
-                      : `${ring.percent.toFixed(1)}%${stale ? " · stale" : ""}`}
+                    {ringValueText(ring)}
                   </dd>
                   <dd className="text-[11px] text-zinc-500 dark:text-zinc-400">{ring.detail}</dd>
                 </div>
@@ -109,32 +109,26 @@ export function ReactorRings({
             className="h-full w-full -rotate-90"
             aria-label="Reactor utilization"
           >
-            {ringOrder.map(({ key, track }) => (
+            {ringOrder.map(({ key, radius }) => (
               <circle
                 key={`${key}-track`}
                 cx="60"
                 cy="60"
-                r={Number(track.slice(3, -1))}
+                r={radius}
                 fill="none"
-                strokeWidth={key === "memory" ? 5 : key === "kv" ? 6 : 7}
+                strokeWidth={radius === 54 ? 5 : radius === 42 ? 6 : 7}
                 className="stroke-zinc-100 dark:stroke-zinc-800"
               />
             ))}
-            <ReactorRing ring={rings.memory} color={ringColor("memory", undefined)} radius={54} />
-            <ReactorRing
-              ring={rings.kv}
-              color={ringColor("kv", rings.kv.state)}
-              radius={42}
-              stale={rings.kv.state === "stale"}
-            />
-            <ReactorRing ring={rings.gpu} color={ringColor("gpu", undefined)} radius={30} />
+            {ringOrder.map(({ key, radius }) => (
+              <ReactorRing key={key} ring={rings[key]} radius={radius} />
+            ))}
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
             <p className="font-mono text-3xl font-semibold text-zinc-900 tabular-nums dark:text-zinc-100">
               {inference.tokensPerSecondText}
             </p>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">Tokens / sec</p>
-            <span className="sr-only">GPU utilization is shown by the inner ring.</span>
           </div>
         </div>
       </div>
