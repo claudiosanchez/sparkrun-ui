@@ -15,24 +15,32 @@ function reactor(name: string): ReactorState {
     managedWorkloadCount: 0,
     managedWorkloadText: "0 managed workloads",
     rings: {
-      memory: {
-        label: "Total unified memory",
-        percent: 50,
-        detail: "1.0 / 2.0 GB",
-        source: "sparkrun-monitor",
-      },
       kv: {
         label: "KV cache occupancy",
         percent: null,
+        status: "Unavailable",
+        tone: "neutral",
         detail: "Capacity not reported",
         source: "vllm-metrics",
         state: "unavailable",
       },
-      gpu: {
-        label: "GPU compute utilization",
+      active: {
+        label: "Active request capacity",
+        percent: null,
+        status: "Target not set",
+        tone: "neutral",
+        detail: "Safe request target not set",
+        source: "vllm-metrics",
+        state: "unavailable",
+      },
+      queue: {
+        label: "Queue pressure",
         percent: 0,
-        detail: "0.0%",
-        source: "sparkrun-monitor",
+        status: "Clear",
+        tone: "success",
+        detail: "0 / 8 queued-request budget",
+        source: "vllm-metrics",
+        state: "live",
       },
     },
     inference: {

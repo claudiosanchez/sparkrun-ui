@@ -70,16 +70,21 @@ export const RecipeValidateResultSchema = z.object({
 export type RecipeValidateResult = z.infer<typeof RecipeValidateResultSchema>;
 
 export const MonitorSampleSchema = z.object({}).catchall(z.string());
-export const MonitorHostSchema = z.object({
-  host: z.string(),
-  error: z.unknown().nullable().default(null),
-  sample: MonitorSampleSchema.nullable().default(null),
-  workloads: z.array(z.unknown()).default([]),
-  used_slots: z.number().default(0),
-  free_slots: z.number().default(0),
-}).loose();
+export const MonitorHostSchema = z
+  .object({
+    host: z.string(),
+    error: z.unknown().nullable().default(null),
+    sample: MonitorSampleSchema.nullable().default(null),
+    workloads: z.array(z.unknown()).default([]),
+    used_slots: z.number().default(0),
+    free_slots: z.number().default(0),
+  })
+  .loose();
 export type MonitorHost = z.infer<typeof MonitorHostSchema>;
-export const MonitorTickSchema = z.object({ timestamp: z.number(), hosts: z.array(MonitorHostSchema) });
+export const MonitorTickSchema = z.object({
+  timestamp: z.number(),
+  hosts: z.array(MonitorHostSchema),
+});
 export type MonitorTick = z.infer<typeof MonitorTickSchema>;
 
 export const ClusterEntrySchema = z.object({
@@ -87,8 +92,15 @@ export const ClusterEntrySchema = z.object({
   hosts: z.array(z.string()).default([]),
   description: z.string().optional(),
   is_default: z.boolean().default(false),
+  reactorCapacity: z
+    .object({
+      safeConcurrentRequests: z.number().int().positive(),
+      queueBudget: z.number().int().positive(),
+    })
+    .optional(),
 });
 export type ClusterEntry = z.infer<typeof ClusterEntrySchema>;
+export type ReactorCapacityPolicy = NonNullable<ClusterEntry["reactorCapacity"]>;
 
 export const ValidationIssueSchema = z.object({
   severity: z.enum(["error", "warning"]),

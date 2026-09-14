@@ -125,6 +125,29 @@ docker compose up -d
 - `--sparkrun-bin <path>` / `SPARKRUN_BIN` — path to the sparkrun binary
   (default: `sparkrun` on `$PATH`)
 
+### Reactor capacity policy
+
+The Dashboard can read optional per-cluster operating targets from
+`~/.config/sparkrun-ui/reactor-capacity.json` on Linux,
+`~/Library/Application Support/sparkrun-ui/reactor-capacity.json` on macOS, or
+`%APPDATA%/sparkrun-ui/reactor-capacity.json` on Windows. Set
+`SPARKRUN_UI_REACTOR_CAPACITY_POLICY_PATH` to use another file.
+
+```json
+{
+  "clusters": {
+    "c032": {
+      "safe_concurrent_requests": 4,
+      "queue_budget": 16
+    }
+  }
+}
+```
+
+`safe_concurrent_requests` and `queue_budget` must be positive integers. They
+are operating policy values, not model lifecycle settings. If a cluster has no
+valid target, the Dashboard shows `Target not set` for its target-based rings.
+
 ## Caveats
 
 - **No auth.** Bind to a trusted network only. The UI has full access to

@@ -40,20 +40,70 @@ const vllm = VllmClusterSnapshotSchema.parse({
   },
 });
 
+function snapshot({
+  kv = 37.5,
+  running = 1,
+  waiting = 0,
+  state = "live",
+}: {
+  kv?: number | null;
+  running?: number | null;
+  waiting?: number | null;
+  state?: "live" | "warming" | "stale" | "unavailable" | "reset";
+} = {}) {
+  return VllmClusterSnapshotSchema.parse({
+    ...vllm,
+    state: state === "stale" ? "stale" : state === "unavailable" ? "unavailable" : "live",
+    metrics: {
+      ...vllm.metrics,
+      kvCachePercent: { value: kv, state, observedAtMs: 50_000 },
+      runningRequests: { value: running, state, observedAtMs: 50_000 },
+      waitingRequests: { value: waiting, state, observedAtMs: 50_000 },
+    },
+  });
+}
+
 describe("deriveReactorState", () => {
-  it("maps the original three rings to real sources", () => {
-    const state = deriveReactorState({ cluster: c032Entry, tick: c032Tick, vllm });
+  it("derives serving-pressure rings from an explicit policy", () => {
+    const state = deriveReactorState({
+      cluster: {
+        ...c032Entry,
+        reactorCapacity: { safeConcurrentRequests: 4, queueBudget: 8 },
+      },
+      tick: c032Tick,
+      vllm: snapshot({ kv: 78, running: 3, waiting: 2 }),
+    });
 
     expect(state.rings).toMatchObject({
-      memory: { percent: 50, source: "sparkrun-monitor" },
-      kv: { percent: 37.5, source: "vllm-metrics" },
-      gpu: { percent: 70, source: "sparkrun-monitor" },
+      kv: {
+        percent: 78,
+        status: "Watch",
+        tone: "warning",
+        source: "vllm-metrics",
+      },
+      active: {
+        percent: 75,
+        detail: "3 / 4 safe requests",
+        status: "Busy",
+        tone: "warning",
+        source: "vllm-metrics",
+      },
+      queue: {
+        percent: 25,
+        detail: "2 / 8 queued-request budget",
+        status: "Waiting",
+        tone: "warning",
+        source: "vllm-metrics",
+      },
     });
-    expect(state.rings.gpu.detail).toBe("Compute load");
+    expect("memory" in state.rings).toBe(false);
+    expect("gpu" in state.rings).toBe(false);
+    expect(state.metrics.memoryText).toBe("64.0 / 128.0 GB");
+    expect(state.metrics.gpuText).toBe("70%");
     expect(state.inference).toMatchObject({
       tokensPerSecondText: "42.6",
-      runningText: "1",
-      queuedText: "0",
+      runningText: "3",
+      queuedText: "2",
       clientsText: "—",
       sessionsText: "—",
     });
@@ -70,9 +120,127 @@ describe("deriveReactorState", () => {
 
     const state = deriveReactorState({ cluster: c032Entry, tick: c032Tick, vllm: snapshot });
 
-    expect(state.rings.memory.detail).toBe("64.0 / 128.0 GB");
+    expect(state.metrics.memoryText).toBe("64.0 / 128.0 GB");
     expect(state.rings.kv.detail).toBe("3.17M cache-token capacity");
   });
+
+  it("uses a neutral target-not-set state instead of fabricating pressure", () => {
+    const state = deriveReactorState({ cluster: c032Entry, vllm });
+
+    expect(state.rings.active).toMatchObject({
+      percent: null,
+      status: "Target not set",
+      tone: "neutral",
+      state: "unavailable",
+    });
+    expect(state.rings.queue).toMatchObject({
+      percent: null,
+      status: "Target not set",
+      tone: "neutral",
+      state: "unavailable",
+    });
+  });
+
+  it.each([
+    { value: 0, status: "Headroom", tone: "success" },
+    { value: 85, status: "Tight", tone: "pressure" },
+    { value: 95, status: "Critical", tone: "critical" },
+  ] as const)("maps KV occupancy $value% to $status", ({ value, status, tone }) => {
+    const state = deriveReactorState({ cluster: c032Entry, vllm: snapshot({ kv: value }) });
+
+    expect(state.rings.kv).toMatchObject({ percent: value, status, tone, state: "live" });
+  });
+
+  it.each([
+    { running: 0, status: "Idle", tone: "neutral", percent: 0 },
+    { running: 1, status: "Serving", tone: "info", percent: 25 },
+    { running: 4, status: "At capacity", tone: "pressure", percent: 100 },
+    { running: 5, status: "Over capacity", tone: "critical", percent: 125 },
+  ] as const)(
+    "maps $running active requests to $status and retains the raw $percent% ratio",
+    ({ running, status, tone, percent }) => {
+      const state = deriveReactorState({
+        cluster: {
+          ...c032Entry,
+          reactorCapacity: { safeConcurrentRequests: 4, queueBudget: 8 },
+        },
+        vllm: snapshot({ running }),
+      });
+
+      expect(state.rings.active).toMatchObject({ percent, status, tone, state: "live" });
+    },
+  );
+
+  it.each([
+    { waiting: 0, status: "Clear", tone: "success", percent: 0 },
+    { waiting: 4, status: "Backed up", tone: "pressure", percent: 50 },
+    { waiting: 8, status: "Queue limit reached", tone: "critical", percent: 100 },
+  ] as const)("maps $waiting queued requests to $status", ({ waiting, status, tone, percent }) => {
+    const state = deriveReactorState({
+      cluster: {
+        ...c032Entry,
+        reactorCapacity: { safeConcurrentRequests: 4, queueBudget: 8 },
+      },
+      vllm: snapshot({ waiting }),
+    });
+
+    expect(state.rings.queue).toMatchObject({ percent, status, tone, state: "live" });
+  });
+
+  it("retains a stale numeric ring value with a neutral stale state", () => {
+    const state = deriveReactorState({
+      cluster: {
+        ...c032Entry,
+        reactorCapacity: { safeConcurrentRequests: 4, queueBudget: 8 },
+      },
+      vllm: snapshot({ kv: 78, running: 5, waiting: 4, state: "stale" }),
+    });
+
+    expect(state.rings.kv).toMatchObject({
+      percent: 78,
+      status: "Stale",
+      tone: "neutral",
+      state: "stale",
+    });
+    expect(state.rings.active).toMatchObject({
+      percent: 125,
+      status: "Stale",
+      tone: "neutral",
+      state: "stale",
+    });
+    expect(state.rings.queue).toMatchObject({
+      percent: 50,
+      status: "Stale",
+      tone: "neutral",
+      state: "stale",
+    });
+  });
+
+  it.each([
+    { readingState: "warming", status: "Warming" },
+    { readingState: "reset", status: "Reset" },
+    { readingState: "unavailable", status: "Unavailable" },
+  ] as const)(
+    "renders $readingState request and KV readings as neutral $status rings",
+    ({ readingState, status }) => {
+      const state = deriveReactorState({
+        cluster: {
+          ...c032Entry,
+          reactorCapacity: { safeConcurrentRequests: 4, queueBudget: 8 },
+        },
+        vllm: snapshot({ kv: null, running: null, waiting: null, state: readingState }),
+      });
+
+      for (const ring of [state.rings.kv, state.rings.active, state.rings.queue]) {
+        expect(ring).toMatchObject({
+          percent: null,
+          status,
+          tone: "neutral",
+          state: readingState,
+        });
+      }
+    },
+  );
 
   it("preserves a live zero and never fabricates client or session counts", () => {
     const zero = VllmClusterSnapshotSchema.parse({

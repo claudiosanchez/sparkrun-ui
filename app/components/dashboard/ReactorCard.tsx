@@ -11,6 +11,7 @@ export function ReactorCard({ cluster }: { cluster: ClusterEntry }) {
   const { metrics } = state;
   const measurements = [
     ["CPU utilization", metrics.cpuText],
+    ["GPU utilization", metrics.gpuText],
     ["Unified memory", metrics.memoryText],
     ["GPU temperature", metrics.gpuTemperatureText],
     ["CPU temperature", metrics.cpuTemperatureText],

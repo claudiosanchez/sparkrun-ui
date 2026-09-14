@@ -3,6 +3,81 @@ import type { ClusterEntry, ClusterStatus } from "./schemas";
 import type { ServiceHealth } from "./rpc/procedures/services";
 import type { VllmClusterSnapshot, VllmMetricState, VllmReading } from "./vllmMetrics";
 
+type RingTone = "success" | "info" | "warning" | "pressure" | "critical" | "neutral";
+
+type RingSemanticState = {
+  percent: number | null;
+  status: string;
+  tone: RingTone;
+  state: VllmMetricState;
+};
+
+function neutralReadingState(state: VllmMetricState): RingSemanticState {
+  return {
+    percent: null,
+    status:
+      state === "warming"
+        ? "Warming"
+        : state === "reset"
+          ? "Reset"
+          : state === "stale"
+            ? "Stale"
+            : "Unavailable",
+    tone: "neutral",
+    state,
+  };
+}
+
+function kvPressure(value: number | null, state: VllmMetricState): RingSemanticState {
+  if (value === null || state === "warming" || state === "reset" || state === "unavailable") {
+    return neutralReadingState(state);
+  }
+  if (state === "stale") return { percent: value, status: "Stale", tone: "neutral", state };
+  if (value < 70) return { percent: value, status: "Headroom", tone: "success", state };
+  if (value < 85) return { percent: value, status: "Watch", tone: "warning", state };
+  if (value < 95) return { percent: value, status: "Tight", tone: "pressure", state };
+  return { percent: value, status: "Critical", tone: "critical", state };
+}
+
+function activePressure(
+  value: number | null,
+  target: number | undefined,
+  state: VllmMetricState,
+): RingSemanticState {
+  if (target === undefined || !Number.isFinite(target) || target <= 0) {
+    return { percent: null, status: "Target not set", tone: "neutral", state: "unavailable" };
+  }
+  if (value === null || state === "warming" || state === "reset" || state === "unavailable") {
+    return neutralReadingState(state);
+  }
+  const percent = (value / target) * 100;
+  if (state === "stale") return { percent, status: "Stale", tone: "neutral", state };
+  if (percent === 0) return { percent, status: "Idle", tone: "neutral", state };
+  if (percent < 70) return { percent, status: "Serving", tone: "info", state };
+  if (percent < 85) return { percent, status: "Busy", tone: "warning", state };
+  if (percent <= 100) return { percent, status: "At capacity", tone: "pressure", state };
+  return { percent, status: "Over capacity", tone: "critical", state };
+}
+
+function queuePressure(
+  value: number | null,
+  target: number | undefined,
+  state: VllmMetricState,
+): RingSemanticState {
+  if (target === undefined || !Number.isFinite(target) || target <= 0) {
+    return { percent: null, status: "Target not set", tone: "neutral", state: "unavailable" };
+  }
+  if (value === null || state === "warming" || state === "reset" || state === "unavailable") {
+    return neutralReadingState(state);
+  }
+  const percent = (value / target) * 100;
+  if (state === "stale") return { percent, status: "Stale", tone: "neutral", state };
+  if (percent === 0) return { percent, status: "Clear", tone: "success", state };
+  if (percent < 50) return { percent, status: "Waiting", tone: "warning", state };
+  if (percent < 100) return { percent, status: "Backed up", tone: "pressure", state };
+  return { percent, status: "Queue limit reached", tone: "critical", state };
+}
+
 type ReactorInput = {
   cluster: ClusterEntry;
   status?: ClusterStatus | null;
@@ -75,12 +150,6 @@ export function deriveReactorState({
   const managedWorkloadCount = status ? status.solo_entries.length : null;
   const cpuPercent = metric("cpu_usage_pct", true);
   const gpuPercent = metric("gpu_util_pct", true);
-  const memoryUsed = metric("mem_used_mb");
-  const memoryTotal = metric("mem_total_mb");
-  const memoryPercent =
-    memoryUsed === null || memoryTotal === null || memoryTotal <= 0
-      ? null
-      : (memoryUsed / memoryTotal) * 100;
 
   const unavailableVllmReading: VllmReading = {
     value: null,
@@ -119,11 +188,22 @@ export function deriveReactorState({
   };
   const kvReading = vllmReading("kvCachePercent");
   const kvState = effectiveState(kvReading);
+  const runningReading = vllmReading("runningRequests");
+  const runningState = effectiveState(runningReading);
+  const waitingReading = vllmReading("waitingRequests");
+  const waitingState = effectiveState(waitingReading);
   const kvCapacityReading = vllmReading("kvCacheCapacityTokens");
   const kvDetail =
     kvCapacityReading.value === null
       ? "Capacity not reported"
       : `${tokenCountText(kvCapacityReading.value)} cache-token capacity`;
+  const requestCountText = (value: number) =>
+    Number.isInteger(value) ? String(value) : value.toFixed(1);
+  const activeTarget = cluster.reactorCapacity?.safeConcurrentRequests;
+  const queueTarget = cluster.reactorCapacity?.queueBudget;
+  const kvSemantic = kvPressure(kvReading.value, kvState);
+  const activeSemantic = activePressure(runningReading.value, activeTarget, runningState);
+  const queueSemantic = queuePressure(waitingReading.value, queueTarget, waitingState);
   return {
     name: cluster.name,
     hostText: cluster.hosts.join(", ") || "No hosts configured",
@@ -155,24 +235,33 @@ export function deriveReactorState({
         ? "Managed workloads unavailable"
         : `${managedWorkloadCount} managed workload${managedWorkloadCount === 1 ? "" : "s"}`,
     rings: {
-      memory: {
-        label: "Total unified memory",
-        percent: memoryPercent,
-        detail: memoryText("mem"),
-        source: "sparkrun-monitor" as const,
-      },
       kv: {
         label: "KV cache occupancy",
-        percent: kvReading.value,
+        ...kvSemantic,
         detail: kvDetail,
         source: "vllm-metrics" as const,
-        state: kvState,
       },
-      gpu: {
-        label: "GPU compute utilization",
-        percent: gpuPercent,
-        detail: "Compute load",
-        source: "sparkrun-monitor" as const,
+      active: {
+        label: "Active request capacity",
+        ...activeSemantic,
+        detail:
+          activeTarget === undefined || !Number.isFinite(activeTarget) || activeTarget <= 0
+            ? "Safe request target not set"
+            : activeSemantic.percent === null
+              ? "Running requests unavailable"
+              : `${requestCountText(runningReading.value!)} / ${activeTarget} safe requests`,
+        source: "vllm-metrics" as const,
+      },
+      queue: {
+        label: "Queue pressure",
+        ...queueSemantic,
+        detail:
+          queueTarget === undefined || !Number.isFinite(queueTarget) || queueTarget <= 0
+            ? "Queued-request budget not set"
+            : queueSemantic.percent === null
+              ? "Waiting requests unavailable"
+              : `${requestCountText(waitingReading.value!)} / ${queueTarget} queued-request budget`,
+        source: "vllm-metrics" as const,
       },
     },
     inference: {
@@ -180,8 +269,8 @@ export function deriveReactorState({
       stateText: rateStateText,
       tokensPerSecond: tokenReading.value,
       tokensPerSecondText: rateText,
-      runningText: requestText(vllmReading("runningRequests")),
-      queuedText: requestText(vllmReading("waitingRequests")),
+      runningText: requestText(runningReading),
+      queuedText: requestText(waitingReading),
       clientsText: "—" as const,
       sessionsText: "—" as const,
     },
