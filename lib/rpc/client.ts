@@ -7,6 +7,6 @@ import type { AppRouter } from "./router";
 const baseUrl =
   typeof window !== "undefined" ? `${window.location.origin}/rpc` : "http://127.0.0.1:5678/rpc";
 
-const link = new RPCLink({ url: baseUrl });
+const link = new RPCLink({ url: baseUrl, method: "POST" });
 
 export const rpc: RouterClient<AppRouter> = createORPCClient(link);

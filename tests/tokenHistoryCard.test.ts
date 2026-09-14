@@ -99,6 +99,14 @@ it("retains the displayed chart range while a new range loads", () => {
   expect(html).toContain("Loading 1d; showing 15m");
 });
 
+it("renders history content after a successful client response", () => {
+  const html = renderCard(baseQuery({ result }));
+
+  expect(html).not.toContain("Loading persisted token history");
+  expect(html).toContain("Latest: 0.0 Tokens/s");
+  expect(html).toContain('role="img"');
+});
+
 it("renders an honest collecting message without a chart for empty history", () => {
   const html = renderCard(
     baseQuery({
