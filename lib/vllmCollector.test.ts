@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe("createVllmCollectorRegistry", () => {
-  it("uses the minimum requested subscriber interval and wakes when it changes", async () => {
+  it("defaults server-owned collection to one second", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response(body));
     const wait = vi.fn(
       (_ms: number, signal: AbortSignal) =>
@@ -49,19 +49,119 @@ describe("createVllmCollectorRegistry", () => {
         ),
     );
     const registry = createVllmCollectorRegistry({ ...dependencies(fetch), wait });
-    const recorder = vi.fn();
-    const browser = vi.fn();
-    const removeRecorder = registry.subscribe("c032", "host", recorder, undefined, 5_000);
+    const remove = registry.subscribe("c032", "host", vi.fn());
 
-    await vi.waitFor(() => expect(wait).toHaveBeenCalledWith(5_000, expect.any(AbortSignal)));
-    expect(registry.getEntry("c032")?.pollIntervalMs).toBe(5_000);
+    await vi.waitFor(() => expect(wait).toHaveBeenCalledWith(1_000, expect.any(AbortSignal)));
+    expect(registry.getEntry("c032")?.pollIntervalMs).toBe(1_000);
 
-    const removeBrowser = registry.subscribe("c032", "host", browser);
-    await vi.waitFor(() => expect(registry.getEntry("c032")?.pollIntervalMs).toBe(2_000));
-    await vi.waitFor(() => expect(wait.mock.calls.some(([ms]) => ms === 2_000)).toBe(true));
+    remove();
+    expect(registry.getEntry("c032")?.pollIntervalMs).toBe(1_000);
+    registry.stopAll();
+  });
 
-    removeBrowser();
-    await vi.waitFor(() => expect(registry.getEntry("c032")?.pollIntervalMs).toBe(5_000));
+  it("schedules the next single fetch from the prior fetch start time", async () => {
+    let now = 0;
+    let releaseWait: (() => void) | undefined;
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      if (now === 0) now = 400;
+      return response(body);
+    });
+    const wait = vi.fn(
+      (_ms: number, signal: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          releaseWait = resolve;
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    );
+    const registry = createVllmCollectorRegistry({
+      ...dependencies(fetch, wait),
+      monotonicNow: () => now,
+    });
+    const remove = registry.subscribe("c032", "host", vi.fn());
+
+    await vi.waitFor(() => expect(wait).toHaveBeenCalledWith(600, expect.any(AbortSignal)));
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    now = 1_000;
+    releaseWait!();
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    remove();
+    registry.stopAll();
+  });
+
+  it("skips an overdue wait without overlapping slow fetches", async () => {
+    let now = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const releases: Array<() => void> = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      () =>
+        new Promise<Response>((resolve) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          releases.push(() => {
+            inFlight -= 1;
+            resolve(response(body));
+          });
+        }),
+    );
+    const wait = vi.fn((ms: number, signal: AbortSignal) => {
+      if (ms === 0) return Promise.resolve();
+      return new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    });
+    const registry = createVllmCollectorRegistry({
+      ...dependencies(fetch, wait),
+      monotonicNow: () => now,
+    });
+    const remove = registry.subscribe("c032", "host", vi.fn());
+
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    now = 1_500;
+    releases[0]();
+
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(wait).toHaveBeenCalledWith(0, expect.any(AbortSignal));
+    expect(maxInFlight).toBe(1);
+
+    releases[1]();
+    remove();
+    registry.stopAll();
+  });
+
+  it("recalculates the same monotonic deadline when a requested interval changes", async () => {
+    let now = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      now = 100;
+      return response(body);
+    });
+    const wait = vi.fn(
+      (_ms: number, signal: AbortSignal) =>
+        new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        ),
+    );
+    const registry = createVllmCollectorRegistry({
+      ...dependencies(fetch, wait),
+      monotonicNow: () => now,
+    });
+    const removeRecorder = registry.subscribe("c032", "host", vi.fn(), undefined, 2_000);
+
+    await vi.waitFor(() => expect(wait).toHaveBeenCalledWith(1_900, expect.any(AbortSignal)));
+
+    const removeFastSubscriber = registry.subscribe("c032", "host", vi.fn(), undefined, 1_000);
+    await vi.waitFor(() => expect(wait).toHaveBeenCalledWith(900, expect.any(AbortSignal)));
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    now = 200;
+    removeFastSubscriber();
+    await vi.waitFor(() => expect(wait).toHaveBeenCalledWith(1_800, expect.any(AbortSignal)));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(registry.getEntry("c032")?.pollIntervalMs).toBe(2_000);
+
     removeRecorder();
     registry.stopAll();
   });
@@ -102,13 +202,10 @@ describe("createVllmCollectorRegistry", () => {
       .fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(response(body))
       .mockResolvedValueOnce(response(body.replace(" 100", " 160")));
-    const monotonicNow = vi
-      .fn<() => number>()
-      .mockReturnValueOnce(1_000)
-      .mockReturnValueOnce(3_000);
+    let monotonicMs = 1_000;
     const registry = createVllmCollectorRegistry({
       ...dependencies(fetch, wait),
-      monotonicNow,
+      monotonicNow: () => monotonicMs,
     });
     const first = vi.fn();
     const remove = registry.subscribe("c032", "host", first);
@@ -118,6 +215,7 @@ describe("createVllmCollectorRegistry", () => {
     const reconnect = vi.fn();
     const removeReconnect = registry.subscribe("c032", "host", reconnect);
     expect(reconnect).toHaveBeenCalledWith(first.mock.calls[0][0]);
+    monotonicMs = 3_000;
     releaseWait!();
     await vi.waitFor(() => expect(reconnect).toHaveBeenCalledTimes(2));
     expect(reconnect.mock.calls[1][0].metrics.tokensPerSecond).toMatchObject({
@@ -199,14 +297,10 @@ describe("createVllmCollectorRegistry", () => {
       .mockResolvedValueOnce(response(body))
       .mockResolvedValueOnce(response(invalidGeneration))
       .mockResolvedValueOnce(response(body.replace(" 100", " 160")));
-    const monotonicNow = vi
-      .fn<() => number>()
-      .mockReturnValueOnce(1_000)
-      .mockReturnValueOnce(3_000)
-      .mockReturnValueOnce(5_000);
+    let monotonicMs = 1_000;
     const registry = createVllmCollectorRegistry({
       ...dependencies(fetch, wait),
-      monotonicNow,
+      monotonicNow: () => monotonicMs,
     });
     const listener = vi.fn();
     const remove = registry.subscribe("c032", "host", listener);
@@ -217,6 +311,7 @@ describe("createVllmCollectorRegistry", () => {
       state: "warming",
     });
 
+    monotonicMs = 3_000;
     releaseWait!();
     await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2));
     expect(listener.mock.calls[1][0].metrics.tokensPerSecond).toMatchObject({
@@ -224,6 +319,7 @@ describe("createVllmCollectorRegistry", () => {
       state: "unavailable",
     });
 
+    monotonicMs = 5_000;
     releaseWait!();
     await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(3));
     expect(listener.mock.calls[2][0].metrics.tokensPerSecond).toMatchObject({

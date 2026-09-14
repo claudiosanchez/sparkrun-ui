@@ -7,7 +7,7 @@ import {
   type VllmClusterSnapshot,
 } from "./vllmMetrics";
 
-export const POLL_INTERVAL_MS = 2_000;
+export const POLL_INTERVAL_MS = 1_000;
 export const FETCH_TIMEOUT_MS = 3_000;
 export const IDLE_GRACE_MS = 10_000;
 export const MAX_METRICS_BYTES = 1_000_000;
@@ -263,22 +263,32 @@ function removeRequestedInterval(entry: CollectorEntry, listener: Listener) {
 async function waitForNextPoll(
   entry: CollectorEntry,
   dependencies: VllmCollectorDependencies,
+  startedAtMs: number,
 ): Promise<void> {
-  const delayController = new AbortController();
-  const delaySignal = AbortSignal.any([entry.controller.signal, delayController.signal]);
-  let resolveWake: (() => void) | null = null;
-  const wake = new Promise<void>((resolve) => {
-    resolveWake = resolve;
-  });
-  const wakeDelay = () => resolveWake?.();
-  entry.wakeDelay = wakeDelay;
-  const delay = dependencies.wait(entry.pollIntervalMs, delaySignal);
-  try {
-    await Promise.race([delay, wake]);
-  } finally {
-    if (entry.wakeDelay === wakeDelay) entry.wakeDelay = null;
-    delayController.abort();
-    void delay.catch(() => undefined);
+  while (!entry.controller.signal.aborted) {
+    const delayController = new AbortController();
+    const delaySignal = AbortSignal.any([entry.controller.signal, delayController.signal]);
+    let resolveWake: (() => void) | null = null;
+    const wake = new Promise<"changed">((resolve) => {
+      resolveWake = () => resolve("changed");
+    });
+    const wakeDelay = () => resolveWake?.();
+    entry.wakeDelay = wakeDelay;
+    const delay = dependencies
+      .wait(
+        Math.max(0, startedAtMs + entry.pollIntervalMs - dependencies.monotonicNow()),
+        delaySignal,
+      )
+      .then(() => "elapsed" as const);
+    let outcome: "changed" | "elapsed";
+    try {
+      outcome = await Promise.race([delay, wake]);
+    } finally {
+      if (entry.wakeDelay === wakeDelay) entry.wakeDelay = null;
+      delayController.abort();
+      void delay.catch(() => undefined);
+    }
+    if (outcome === "elapsed") return;
   }
 }
 
@@ -297,9 +307,10 @@ async function runEntry(
   dependencies: VllmCollectorDependencies,
 ): Promise<void> {
   while (!entry.controller.signal.aborted) {
+    const startedAtMs = dependencies.monotonicNow();
     await pollEntry(entry, dependencies);
     if (entry.controller.signal.aborted) return;
-    await waitForNextPoll(entry, dependencies);
+    await waitForNextPoll(entry, dependencies, startedAtMs);
   }
 }
 
