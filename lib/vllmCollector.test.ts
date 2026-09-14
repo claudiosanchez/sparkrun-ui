@@ -166,6 +166,43 @@ describe("createVllmCollectorRegistry", () => {
     registry.stopAll();
   });
 
+  it("extends the deadline when an interval change races timer completion", async () => {
+    let now = 0;
+    let fetchCalls = 0;
+    let releaseTimer: (() => void) | undefined;
+    const waits: number[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      fetchCalls += 1;
+      return response(body);
+    });
+    const wait = (ms: number, signal: AbortSignal) => {
+      waits.push(ms);
+      return new Promise<void>((resolve) => {
+        if (waits.length === 1) releaseTimer = resolve;
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    };
+    const registry = createVllmCollectorRegistry({
+      ...dependencies(fetch, wait),
+      monotonicNow: () => now,
+    });
+    const removeSlowSubscriber = registry.subscribe("c032", "host", vi.fn(), undefined, 2_000);
+    const removeFastSubscriber = registry.subscribe("c032", "host", vi.fn(), undefined, 1_000);
+
+    await vi.waitFor(() => expect(waits).toEqual([1_000]));
+    now = 1_000;
+    releaseTimer!();
+    queueMicrotask(removeFastSubscriber);
+
+    await vi.waitFor(() => expect(waits).toHaveLength(2));
+    expect(waits).toEqual([1_000, 1_000]);
+    expect(fetchCalls).toBe(1);
+    expect(registry.getEntry("c032")?.pollIntervalMs).toBe(2_000);
+
+    removeSlowSubscriber();
+    registry.stopAll();
+  });
+
   it("shares one poll loop and one response across subscribers to a cluster", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(response(body));
     const registry = createVllmCollectorRegistry(dependencies(fetch));

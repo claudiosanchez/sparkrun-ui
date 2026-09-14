@@ -288,7 +288,12 @@ async function waitForNextPoll(
       delayController.abort();
       void delay.catch(() => undefined);
     }
-    if (outcome === "elapsed") return;
+    if (
+      outcome === "elapsed" &&
+      dependencies.monotonicNow() >= startedAtMs + entry.pollIntervalMs
+    ) {
+      return;
+    }
   }
 }
 
