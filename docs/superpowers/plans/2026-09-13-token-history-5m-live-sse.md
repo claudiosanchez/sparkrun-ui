@@ -203,7 +203,8 @@
   - `getSnapshot(cluster)` preserving exact identity until that cluster gets a
     new event;
   - `subscribe(cluster, listener)` with a no-op fallback;
-  - bounded latest-observation state only, never an unbounded event log.
+  - a fingerprint-aware sequence limited to the five-minute, 300-observation
+    live window per cluster, never an unbounded event log.
 
   `TokenHistoryTelemetryProvider` owns one abortable/reconnecting
   `rpc.telemetry.stream({})` loop. It ignores every non-token-history topic,
@@ -222,10 +223,10 @@
 
   `LiveTokenHistoryContent` is the only component that subscribes to a
   cluster-keyed telemetry store. It receives the static base query/result,
-  folds in the current live observation, and renders the existing chart and
-  summary. Mount it only when the displayed range is `5m` and a usable base
-  result exists. Keep the existing `HistoryContent` for every other range and
-  retain all card loading/unavailable/retry behavior.
+  folds in that cluster's bounded live observation sequence, and renders the
+  existing chart and summary. Mount it only when the displayed range is `5m`
+  and a usable base result exists. Keep the existing `HistoryContent` for every
+  other range and retain all card loading/unavailable/retry behavior.
 
   A live event must not call `rpc.tokenHistory.get`; only the existing
   one-minute query refresh does so.

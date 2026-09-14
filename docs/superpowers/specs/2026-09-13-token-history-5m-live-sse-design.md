@@ -73,15 +73,17 @@ The base five-minute chart still starts with the bounded
 `rpc.tokenHistory.get({ cluster, range: "5m" })` response.  A
 `TokenHistoryTelemetryProvider` owns one `rpc.telemetry.stream({})`
 subscription and writes only `token-history` events into a cluster-keyed
-external store.  A small child component is mounted only while a card displays
-`5m`; it subscribes only to its own cluster's store key, retains at most the
-current five-minute live overlay, and applies it to that card's chart result.
+external store. The store retains a fingerprint-aware, bounded five-minute
+observation sequence for each cluster. A small child component is mounted only
+while a card displays `5m`; it subscribes only to its own cluster's store key
+and applies that cluster's sequence to the card's chart result.
 
 The overlay moves the chart window forward from the newest SSE event and
-recalculates only its own coverage, state, summary, and points.  It never
-writes to `DashboardLive`, the history query cache, the durable store, or the
-global page state.  Longer ranges retain their bounded one-minute fetch
-schedule and do not subscribe to the live overlay.
+recalculates only its own coverage, state, summary, and points. It never
+writes to `DashboardLive`, the history query cache, or the durable store.
+The external store is bounded per cluster and preserves identity for untouched
+clusters, so it is not a page-wide React state. Longer ranges retain their
+bounded one-minute fetch schedule and do not subscribe to the live overlay.
 
 ### Rendering and freshness behavior
 
