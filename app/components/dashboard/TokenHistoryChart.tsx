@@ -33,7 +33,6 @@ export function TokenHistoryChart({
   result,
   ariaLabel,
 }: {
-  clusterName: string;
   result: TokenHistoryResult;
   ariaLabel: string;
 }) {

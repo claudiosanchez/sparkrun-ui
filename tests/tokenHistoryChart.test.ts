@@ -23,7 +23,6 @@ const result: TokenHistoryResult = {
 it("renders an accessible fixed-height chart region", () => {
   const html = renderToStaticMarkup(
     createElement(TokenHistoryChart, {
-      clusterName: "alpha",
       result,
       ariaLabel: "Token throughput history for alpha",
     }),
