@@ -46,7 +46,6 @@ export function ReactorCard({ cluster }: { cluster: ClusterEntry }) {
           >
             {state.serviceText}
           </Badge>
-          <Badge>{state.managedWorkloadText}</Badge>
         </div>
 
         <div className="flex flex-col gap-2 py-2">
