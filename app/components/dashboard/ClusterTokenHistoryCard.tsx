@@ -93,12 +93,29 @@ function HistoryContent({
         <p>No token throughput samples have been collected for this range.</p>
         <p>Collection will populate this chart when the cluster reports Tokens/s.</p>
         {requestActive && <LoadingRangeNote query={query} displayedRange={displayedRange} />}
+        {query.error !== null && <p className="text-red-700 dark:text-red-300">{query.error}</p>}
+        {query.isStale && (
+          <p className="text-amber-700 dark:text-amber-300">
+            This collecting state is stale while history refreshes.
+          </p>
+        )}
+        {(query.error !== null || query.isStale) && (
+          <Button type="button" size="sm" onClick={query.retry} disabled={requestActive}>
+            Retry
+          </Button>
+        )}
       </div>
     );
   }
 
   const summary = summarizeTokenHistory(result);
-  const chartLabel = `${clusterName} token throughput history, ${result.range}`;
+  const latestText = formatTokensPerSecond(summary.latest);
+  const averageText = formatTokensPerSecond(summary.average);
+  const minimumText = formatTokensPerSecond(summary.minimum);
+  const maximumText = formatTokensPerSecond(summary.maximum);
+  const chartLabel =
+    `${clusterName} token throughput history, ${displayedRange ?? result.range}; ` +
+    `Latest: ${latestText}; Average: ${averageText}; Min–max: ${minimumText} – ${maximumText}`;
 
   return (
     <div className="flex flex-col gap-3">

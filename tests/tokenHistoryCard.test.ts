@@ -81,7 +81,9 @@ it("renders the card heading, zero summary, and accessible chart", () => {
   expect(html).toContain(">alpha<");
   expect(html).toContain("0.0 Tokens/s");
   expect(html).toContain('role="img"');
-  expect(html).toContain('aria-label="alpha token throughput history, 15m"');
+  expect(html).toContain(
+    'aria-label="alpha token throughput history, 15m; Latest: 0.0 Tokens/s; Average: 6.3 Tokens/s; Min–max: 0.0 Tokens/s – 12.5 Tokens/s"',
+  );
 });
 
 it("renders an honest collecting message without a chart for empty history", () => {
@@ -99,6 +101,28 @@ it("renders an honest collecting message without a chart for empty history", () 
   expect(html).toContain("Collecting history");
   expect(html).toContain("No token throughput samples have been collected for this range.");
   expect(html).not.toContain('role="img"');
+});
+
+it("keeps empty history recoverable when a background refresh is stale", () => {
+  const html = renderCard(
+    baseQuery({
+      result: {
+        ...result,
+        state: "empty",
+        coverage: 0,
+        points: result.points.map((point) => ({ ...point, tokensPerSecond: null })),
+      },
+      isRefreshing: true,
+      isStale: true,
+      error: "Refresh failed",
+    }),
+  );
+
+  expect(html).toContain("Collecting history");
+  expect(html).toContain("Refresh failed");
+  expect(html).toContain("This collecting state is stale while history refreshes.");
+  expect(html).toContain(">Retry<");
+  expect(html).toContain('disabled=""');
 });
 
 it("renders unavailable history with a retry button disabled during an active request", () => {
