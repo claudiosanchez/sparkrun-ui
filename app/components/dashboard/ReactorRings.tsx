@@ -66,11 +66,9 @@ function ReactorRing({
 export function ReactorRings({
   rings,
   inference,
-  modelText,
 }: {
   rings: ReactorState["rings"];
   inference: ReactorState["inference"];
-  modelText: string;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -132,10 +130,7 @@ export function ReactorRings({
             <ReactorRing ring={rings.gpu} color={ringColor("gpu", undefined)} radius={30} />
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
-            <p className="max-w-full truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
-              {modelText}
-            </p>
-            <p className="mt-1 font-mono text-3xl font-semibold text-zinc-900 tabular-nums dark:text-zinc-100">
+            <p className="font-mono text-3xl font-semibold text-zinc-900 tabular-nums dark:text-zinc-100">
               {inference.tokensPerSecondText}
             </p>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">Tokens / sec</p>

@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { DashboardLive } from "@/app/components/dashboard/DashboardLive";
@@ -181,12 +181,54 @@ it("preserves zero and renders unavailable KV without a numeric value", () => {
     clientsText: "—",
     sessionsText: "—",
   };
-  const html = renderToStaticMarkup(
-    createElement(ReactorRings, { rings, inference, modelText: "qwen" }),
-  );
+  const html = renderToStaticMarkup(createElement(ReactorRings, { rings, inference }));
   expect(html).toContain('aria-valuenow="0"');
   expect(html).toContain('aria-valuetext="Not reported"');
   expect(html).not.toContain('aria-valuenow="37.5"');
+});
+
+it("keeps a supplied model name out of the reactor center readout", () => {
+  const rings: ReactorState["rings"] = {
+    memory: {
+      label: "Total unified memory",
+      percent: 50,
+      detail: "64.0 / 128.0 GB",
+      source: "sparkrun-monitor",
+    },
+    kv: {
+      label: "KV cache occupancy",
+      percent: 25,
+      detail: "3.17M cache-token capacity",
+      source: "vllm-metrics",
+      state: "live",
+    },
+    gpu: {
+      label: "GPU compute utilization",
+      percent: 70,
+      detail: "Compute load",
+      source: "sparkrun-monitor",
+    },
+  };
+  const inference: ReactorState["inference"] = {
+    state: "live",
+    stateText: "Tokens per second live",
+    tokensPerSecond: 42.6,
+    tokensPerSecondText: "42.6",
+    runningText: "1",
+    queuedText: "0",
+    clientsText: "—",
+    sessionsText: "—",
+  };
+  const props = {
+    rings,
+    inference,
+    modelText: "model-name-that-must-not-appear",
+  } as unknown as ComponentProps<typeof ReactorRings>;
+  const html = renderToStaticMarkup(createElement(ReactorRings, props));
+
+  expect(html).not.toContain("model-name-that-must-not-appear");
+  expect(html).toContain(">42.6<");
+  expect(html).toContain("Tokens / sec");
 });
 
 it("marks a numeric stale KV value in visible and accessible ring text", () => {
@@ -221,9 +263,7 @@ it("marks a numeric stale KV value in visible and accessible ring text", () => {
     clientsText: "—",
     sessionsText: "—",
   };
-  const html = renderToStaticMarkup(
-    createElement(ReactorRings, { rings, inference, modelText: "qwen" }),
-  );
+  const html = renderToStaticMarkup(createElement(ReactorRings, { rings, inference }));
 
   expect(html).toContain("42.0% · stale");
   expect(html).toContain('aria-valuetext="42.0% · stale"');
