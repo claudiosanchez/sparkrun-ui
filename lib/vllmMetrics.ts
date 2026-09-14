@@ -21,6 +21,11 @@ export const VllmClusterSnapshotSchema = z.object({
     runningRequests: VllmReadingSchema,
     waitingRequests: VllmReadingSchema,
     kvCachePercent: VllmReadingSchema,
+    kvCacheCapacityTokens: VllmReadingSchema.default({
+      value: null,
+      state: "unavailable",
+      observedAtMs: null,
+    }),
   }),
 });
 export type VllmClusterSnapshot = z.infer<typeof VllmClusterSnapshotSchema>;
@@ -29,6 +34,7 @@ const GENERATION_TOKENS = "vllm:generation_tokens_total";
 const RUNNING_REQUESTS = "vllm:num_requests_running";
 const WAITING_REQUESTS = "vllm:num_requests_waiting";
 const KV_CACHE = "vllm:kv_cache_usage_perc";
+const CACHE_CONFIG = "vllm:cache_config_info";
 const allowed = new Set([GENERATION_TOKENS, RUNNING_REQUESTS, WAITING_REQUESTS, KV_CACHE]);
 const sampleLine = /^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{([^}]*)\})?\s+([^\s]+)(?:\s+\d+)?$/;
 const familyAtLineStart = /^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{|\s|$)/;
@@ -39,12 +45,13 @@ export type ParsedVllmMetrics = {
   runningRequests: number | null;
   waitingRequests: number | null;
   kvCachePercent: number | null;
+  kvCacheCapacityTokens: number | null;
   invalidFamilies: ReadonlySet<string>;
   hasValidSamples: boolean;
 };
 
-function canonicalLabels(raw: string | undefined): string | null {
-  if (raw === undefined || raw.trim() === "") return "";
+function parseLabels(raw: string | undefined): Array<[string, string]> | null {
+  if (raw === undefined || raw.trim() === "") return [];
 
   const pairs: string[] = [];
   let start = 0;
@@ -75,11 +82,26 @@ function canonicalLabels(raw: string | undefined): string | null {
     parsed.push([match[1], match[2]]);
   }
   parsed.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return parsed;
+}
+
+function canonicalLabels(raw: string | undefined): string | null {
+  const parsed = parseLabels(raw);
+  if (parsed === null) return null;
+  if (parsed.length === 0) return "";
+  parsed.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
   return parsed.map(([name, value]) => `${name}="${value}"`).join(",");
+}
+
+function labelValue(labels: Array<[string, string]> | null, name: string): string | null {
+  return labels?.find(([label]) => label === name)?.[1] ?? null;
 }
 
 export function parseVllmMetrics(text: string): ParsedVllmMetrics {
   const samples = new Map<string, Array<{ key: string; value: number }>>();
+  const kvCacheCapacities = new Map<string, number>();
+  const kvCacheEngines = new Set<string>();
+  let cacheConfigIsAmbiguous = false;
   const invalidFamilies = new Set<string>();
   let hasValidSamples = false;
 
@@ -93,6 +115,27 @@ export function parseVllmMetrics(text: string): ParsedVllmMetrics {
       const genericValue = Number(match[3]);
       if (Number.isFinite(genericValue) && genericValue >= 0) hasValidSamples = true;
     }
+    if (family === CACHE_CONFIG) {
+      if (!match || match[1] !== family) {
+        cacheConfigIsAmbiguous = true;
+        continue;
+      }
+      const labels = parseLabels(match[2]);
+      const engine = labelValue(labels, "engine");
+      const rawCapacity = labelValue(labels, "kv_cache_size_tokens");
+      const capacity = rawCapacity === null ? Number.NaN : Number(rawCapacity);
+      if (engine === null || !Number.isSafeInteger(capacity) || capacity < 0) {
+        cacheConfigIsAmbiguous = true;
+        continue;
+      }
+      const previousCapacity = kvCacheCapacities.get(engine);
+      if (previousCapacity !== undefined && previousCapacity !== capacity) {
+        cacheConfigIsAmbiguous = true;
+        continue;
+      }
+      kvCacheCapacities.set(engine, capacity);
+      continue;
+    }
     if (!family || !allowed.has(family)) continue;
     if (!match || match[1] !== family) {
       invalidFamilies.add(family);
@@ -100,13 +143,22 @@ export function parseVllmMetrics(text: string): ParsedVllmMetrics {
     }
     const key = canonicalLabels(match[2]);
     const value = Number(match[3]);
-    if (key === null || !Number.isFinite(value) || value < 0) {
+    if (
+      key === null ||
+      !Number.isFinite(value) ||
+      value < 0 ||
+      (family === KV_CACHE && value > 1)
+    ) {
       invalidFamilies.add(family);
       continue;
     }
     const familySamples = samples.get(family) ?? [];
     familySamples.push({ key, value });
     samples.set(family, familySamples);
+    if (family === KV_CACHE) {
+      const engine = labelValue(parseLabels(match[2]), "engine");
+      if (engine !== null) kvCacheEngines.add(engine);
+    }
   }
 
   function familyValues(family: string): Array<{ key: string; value: number }> | null {
@@ -121,6 +173,17 @@ export function parseVllmMetrics(text: string): ParsedVllmMetrics {
   const runningSamples = familyValues(RUNNING_REQUESTS);
   const waitingSamples = familyValues(WAITING_REQUESTS);
   const kvSamples = familyValues(KV_CACHE);
+  // vLLM reports this capacity per engine. It does not define a cluster-wide
+  // total, so only show the value when the metrics describe one engine.
+  const capacityEntry = [...kvCacheCapacities.entries()][0];
+  const kvCacheCapacityTokens =
+    !cacheConfigIsAmbiguous &&
+    kvCacheCapacities.size === 1 &&
+    kvCacheEngines.size <= 1 &&
+    capacityEntry !== undefined &&
+    (kvCacheEngines.size === 0 || kvCacheEngines.has(capacityEntry[0]))
+      ? capacityEntry[1]
+      : null;
 
   return {
     generationTokenSeries,
@@ -143,6 +206,7 @@ export function parseVllmMetrics(text: string): ParsedVllmMetrics {
                 100,
             ),
           ),
+    kvCacheCapacityTokens,
     invalidFamilies,
     hasValidSamples,
   };
@@ -241,6 +305,7 @@ export function unavailableClusterSnapshot(
       runningRequests: unavailableReading(),
       waitingRequests: unavailableReading(),
       kvCachePercent: unavailableReading(),
+      kvCacheCapacityTokens: unavailableReading(),
     },
   };
 }
@@ -261,6 +326,7 @@ export function staleClusterSnapshot(
       runningRequests: stale(previous.metrics.runningRequests),
       waitingRequests: stale(previous.metrics.waitingRequests),
       kvCachePercent: stale(previous.metrics.kvCachePercent),
+      kvCacheCapacityTokens: stale(previous.metrics.kvCacheCapacityTokens),
     },
   };
 }

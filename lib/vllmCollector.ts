@@ -226,6 +226,7 @@ async function pollEntry(
       runningRequests: reading(parsed.runningRequests, observedAtMs),
       waitingRequests: reading(parsed.waitingRequests, observedAtMs),
       kvCachePercent: reading(parsed.kvCachePercent, observedAtMs),
+      kvCacheCapacityTokens: reading(parsed.kvCacheCapacityTokens, observedAtMs),
     },
   };
   entry.lastSnapshot = next;

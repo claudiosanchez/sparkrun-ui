@@ -21,6 +21,7 @@ function snapshot(cluster: string, polledAtMs: number): VllmClusterSnapshot {
       runningRequests: { value: 1, state: "live", observedAtMs: polledAtMs },
       waitingRequests: { value: 0, state: "live", observedAtMs: polledAtMs },
       kvCachePercent: { value: 25, state: "live", observedAtMs: polledAtMs },
+      kvCacheCapacityTokens: { value: 1_000, state: "live", observedAtMs: polledAtMs },
     },
   };
 }

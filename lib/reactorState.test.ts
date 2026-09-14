@@ -59,6 +59,21 @@ describe("deriveReactorState", () => {
     });
   });
 
+  it("shows group-aware KV capacity without adding it to total unified memory", () => {
+    const snapshot = VllmClusterSnapshotSchema.parse({
+      ...vllm,
+      metrics: {
+        ...vllm.metrics,
+        kvCacheCapacityTokens: { value: 3_174_971, state: "live", observedAtMs: 50_000 },
+      },
+    });
+
+    const state = deriveReactorState({ cluster: c032Entry, tick: c032Tick, vllm: snapshot });
+
+    expect(state.rings.memory.detail).toBe("64.0 / 128.0 GB");
+    expect(state.rings.kv.detail).toBe("3.17M cache-token capacity");
+  });
+
   it("preserves a live zero and never fabricates client or session counts", () => {
     const zero = VllmClusterSnapshotSchema.parse({
       ...vllm,
