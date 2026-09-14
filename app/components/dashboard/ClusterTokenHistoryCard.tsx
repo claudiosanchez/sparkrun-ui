@@ -102,7 +102,7 @@ function HistoryContent({
 
   return (
     <div className="flex flex-col gap-3">
-      <TokenHistoryChart clusterName={clusterName} result={result} ariaLabel={chartLabel} />
+      <TokenHistoryChart result={result} ariaLabel={chartLabel} />
       <div className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
         <p>
           Latest: {formatTokensPerSecond(summary.latest)} · Average:{" "}
