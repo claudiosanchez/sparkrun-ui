@@ -130,8 +130,8 @@ function HistoryContent({
           {formatTokensPerSecond(summary.maximum)}
         </p>
         <p>
-          Coverage: {Math.round(result.coverage * 100)}% · Freshness:{" "}
-          {formatFreshness(summary.latestAtMs, query.isStale)}
+          Range: {displayedRange ?? result.range} · Coverage: {Math.round(result.coverage * 100)}% ·
+          Freshness: {formatFreshness(summary.latestAtMs, query.isStale)}
         </p>
         {requestActive && <LoadingRangeNote query={query} displayedRange={displayedRange} />}
         {query.error !== null && <p className="text-red-700 dark:text-red-300">{query.error}</p>}

@@ -84,6 +84,19 @@ it("renders the card heading, zero summary, and accessible chart", () => {
   expect(html).toContain(
     'aria-label="alpha token throughput history, 15m; Latest: 0.0 Tokens/s; Average: 6.3 Tokens/s; Min–max: 0.0 Tokens/s – 12.5 Tokens/s"',
   );
+  expect(html).toContain("Range: 15m");
+});
+
+it("retains the displayed chart range while a new range loads", () => {
+  const html = renderCard(
+    baseQuery({
+      requestedRange: "1d",
+      isRefreshing: true,
+    }),
+  );
+
+  expect(html).toContain("Range: 15m");
+  expect(html).toContain("Loading 1d; showing 15m");
 });
 
 it("renders an honest collecting message without a chart for empty history", () => {
