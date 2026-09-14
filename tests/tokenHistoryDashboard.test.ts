@@ -11,6 +11,7 @@ import {
 } from "@/app/components/dashboard/tokenHistoryData";
 import {
   acquireTokenHistoryRequest,
+  isFreshTokenHistoryCacheEntry,
   isTokenHistoryCacheable,
   shouldRetainUsableHistory,
 } from "@/app/components/dashboard/useTokenHistory";
@@ -84,6 +85,13 @@ describe("token history dashboard data", () => {
     expect(isTokenHistoryCacheable(unavailable)).toBe(false);
   });
 
+  it("invalidates a fresh cached history result after a topology reset", () => {
+    const cached = { result, fetchedAtMs: 100_000, topologyGeneration: 3 };
+
+    expect(isFreshTokenHistoryCacheEntry(cached, 3, 100_001)).toBe(true);
+    expect(isFreshTokenHistoryCacheEntry(cached, 4, 100_001)).toBe(false);
+  });
+
   it("retains usable chart data when a background request is unavailable", () => {
     const unavailable: TokenHistoryResult = { ...result, state: "unavailable" };
 
@@ -119,6 +127,7 @@ describe("token history dashboard data", () => {
     expect(providerSource.match(/rpc\.telemetry\.stream\(/g)).toHaveLength(1);
     expect(providerSource).toContain("new AbortController()");
     expect(providerSource).toContain("waitForRetry");
+    expect(providerSource).toContain("store.beginConnection()");
     expect(providerSource).toContain("setConnectionHealthy(false)");
     expect(providerSource).not.toContain("EventSource");
     expect(providerSource).not.toContain("tokenHistory.stream");

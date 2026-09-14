@@ -54,6 +54,7 @@ export function DashboardTelemetryProvider({
       while (!signal.aborted) {
         try {
           const stream = await rpc.telemetry.stream({}, { signal });
+          store.beginConnection();
           store.setConnectionHealthy(true);
           tokenHistoryTelemetryStore.setConnectionHealthy(true);
           for await (const event of stream) {

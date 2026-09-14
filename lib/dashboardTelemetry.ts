@@ -5,6 +5,8 @@ import { ServiceHealthSchema } from "./serviceHealth";
 import {
   TokenHistoryTelemetryEventSchema,
   TokenHistoryTelemetryPublishEventSchema,
+  TokenHistoryTelemetryResetEventSchema,
+  TokenHistoryTelemetryResetPublishEventSchema,
 } from "./tokenHistoryTelemetry";
 import { VllmClusterSnapshotSchema } from "./vllmMetrics";
 
@@ -50,6 +52,7 @@ export const DashboardTelemetryEventSchema = z.discriminatedUnion("topic", [
   StatusEventSchema,
   ServiceEventSchema,
   TokenHistoryTelemetryEventSchema,
+  TokenHistoryTelemetryResetEventSchema,
 ]);
 export type DashboardTelemetryEvent = z.infer<typeof DashboardTelemetryEventSchema>;
 
@@ -67,6 +70,7 @@ const DashboardTelemetryPublishEventSchema = z.discriminatedUnion("topic", [
   StatusEventSchema.omit({ version: true, revision: true }),
   ServiceEventSchema.omit({ version: true, revision: true }),
   TokenHistoryTelemetryPublishEventSchema,
+  TokenHistoryTelemetryResetPublishEventSchema,
 ]);
 export type DashboardTelemetryPublishEvent = z.input<typeof DashboardTelemetryPublishEventSchema>;
 
@@ -80,6 +84,8 @@ export type DashboardTelemetrySubscription = AsyncIteratorObject<DashboardTeleme
 export type DashboardTelemetryBroker = {
   readonly activeSubscriptionCount: number;
   publish: (event: DashboardTelemetryPublishEvent) => DashboardTelemetryEvent;
+  /** Deliver a state transition to current subscribers without caching it for reconnects. */
+  publishTransient: (event: DashboardTelemetryPublishEvent) => DashboardTelemetryEvent;
   evict: (key: DashboardTelemetryKey) => void;
   subscribe: (signal?: AbortSignal) => DashboardTelemetrySubscription;
   closeSubscriptions: () => void;
@@ -262,22 +268,32 @@ export function createDashboardTelemetryBroker(): DashboardTelemetryBroker {
   const subscriptions = new Set<ManagedSubscription>();
   let revision = 0;
 
+  const publish = (
+    input: DashboardTelemetryPublishEvent,
+    cache: boolean,
+  ): DashboardTelemetryEvent => {
+    const parsed = DashboardTelemetryPublishEventSchema.parse(input);
+    const nextRevision = revision + 1;
+    const isolated = cloneEvent({
+      ...parsed,
+      version: 1,
+      revision: nextRevision,
+    });
+    revision = nextRevision;
+    if (cache) cached.set(eventKey(isolated), isolated);
+    for (const subscription of subscriptions) subscription.push(isolated);
+    return cloneEvent(isolated);
+  };
+
   return {
     get activeSubscriptionCount() {
       return subscriptions.size;
     },
     publish(input) {
-      const parsed = DashboardTelemetryPublishEventSchema.parse(input);
-      const nextRevision = revision + 1;
-      const isolated = cloneEvent({
-        ...parsed,
-        version: 1,
-        revision: nextRevision,
-      });
-      revision = nextRevision;
-      cached.set(eventKey(isolated), isolated);
-      for (const subscription of subscriptions) subscription.push(isolated);
-      return cloneEvent(isolated);
+      return publish(input, true);
+    },
+    publishTransient(input) {
+      return publish(input, false);
     },
     evict(key) {
       const eventKeyToEvict = telemetryKey(key);

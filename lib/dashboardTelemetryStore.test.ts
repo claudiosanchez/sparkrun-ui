@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDashboardTelemetryStore } from "@/app/components/dashboard/dashboardTelemetryStore";
 
-function vllmEvent(cluster: string, revision: number) {
+function vllmEvent(cluster: string, revision: number, tokensPerSecond = 12) {
   return {
     version: 1 as const,
     revision,
@@ -15,7 +15,11 @@ function vllmEvent(cluster: string, revision: number) {
       state: "live" as const,
       error: null,
       metrics: {
-        tokensPerSecond: { value: 12, state: "live" as const, observedAtMs: revision * 1_000 },
+        tokensPerSecond: {
+          value: tokensPerSecond,
+          state: "live" as const,
+          observedAtMs: revision * 1_000,
+        },
         runningRequests: { value: 1, state: "live" as const, observedAtMs: revision * 1_000 },
         waitingRequests: { value: 0, state: "live" as const, observedAtMs: revision * 1_000 },
         kvCachePercent: { value: 25, state: "live" as const, observedAtMs: revision * 1_000 },
@@ -25,6 +29,25 @@ function vllmEvent(cluster: string, revision: number) {
 }
 
 describe("dashboard telemetry store", () => {
+  it("accepts a restarted broker revision after a new SSE connection", () => {
+    const store = createDashboardTelemetryStore({ c032: null });
+
+    expect(store.publish(vllmEvent("c032", 42, 42))).toBe(true);
+
+    store.beginConnection();
+
+    expect(store.publish(vllmEvent("c032", 1, 1))).toBe(true);
+    expect(store.getClusterSnapshot("c032").vllm?.metrics.tokensPerSecond.value).toBe(1);
+  });
+
+  it("rejects an older revision within one SSE connection", () => {
+    const store = createDashboardTelemetryStore({ c032: null });
+
+    expect(store.publish(vllmEvent("c032", 2, 2))).toBe(true);
+    expect(store.publish(vllmEvent("c032", 1, 1))).toBe(false);
+    expect(store.getClusterSnapshot("c032").vllm?.metrics.tokensPerSecond.value).toBe(2);
+  });
+
   it("notifies only the affected cluster for a vLLM update", () => {
     const store = createDashboardTelemetryStore({ c032: null, c458: null });
     const c032Listener = vi.fn();

@@ -73,6 +73,12 @@ describe("DashboardTelemetryEventSchema", () => {
         cluster: "c032",
         payload: { cluster: "c032", host: "c032.local", state: "ready", model: "model-a" },
       },
+      {
+        ...common,
+        topic: "token-history-reset",
+        cluster: "c032",
+        payload: { reason: "topology-change" },
+      },
     ];
 
     for (const event of events) {
@@ -129,6 +135,25 @@ describe("DashboardTelemetryEventSchema", () => {
 });
 
 describe("dashboard telemetry broker", () => {
+  it("delivers a transient topology transition without caching it for reconnects", async () => {
+    const broker = createDashboardTelemetryBroker();
+    const active = broker.subscribe();
+    const reset = broker.publishTransient({
+      topic: "token-history-reset",
+      cluster: "c032",
+      observedAtMs: 10_000,
+      payload: { reason: "topology-change" },
+    });
+
+    await expect(active.next()).resolves.toEqual({ value: reset, done: false });
+
+    const replay = broker.subscribe();
+    expect(replay.pendingEventCount).toBe(0);
+
+    await active.return();
+    await replay.return();
+  });
+
   it("evicts a stale cluster cache entry without dropping other cluster snapshots", async () => {
     const broker = createDashboardTelemetryBroker();
     const c032 = publishVllm(broker, "c032", 10);

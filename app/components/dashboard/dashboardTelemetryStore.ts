@@ -30,6 +30,8 @@ export type DashboardOverviewTelemetrySnapshot = Readonly<{
 
 export type DashboardTelemetryStore = {
   readonly connectionHealthy: boolean;
+  /** Start a fresh server revision generation after a successful SSE connection. */
+  beginConnection: () => void;
   publish: (event: unknown) => boolean;
   getClusterSnapshot: (cluster: string) => DashboardClusterTelemetrySnapshot;
   getOverviewSnapshot: () => DashboardOverviewTelemetrySnapshot;
@@ -164,9 +166,18 @@ export function createDashboardTelemetryStore(
     get connectionHealthy() {
       return connectionHealthy;
     },
+    beginConnection() {
+      // Broker revisions are process-local and restart at zero after a server restart.
+      revisions.clear();
+    },
     publish(input) {
       const parsed = DashboardTelemetryEventSchema.safeParse(input);
-      if (!parsed.success || parsed.data.topic === "token-history") return false;
+      if (
+        !parsed.success ||
+        parsed.data.topic === "token-history" ||
+        parsed.data.topic === "token-history-reset"
+      )
+        return false;
       const event = parsed.data;
       const key = event.topic === "overview-monitor" ? event.topic : clusterKey(event);
       const previousRevision = revisions.get(key);

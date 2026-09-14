@@ -144,17 +144,40 @@ export function createDashboardTelemetryRuntime(
 
   function publishClusterUnavailable(cluster: string): void {
     const observedAtMs = normalizedNow(wallNow);
-    for (const topic of ["vllm", "monitor", "status", "service", "token-history"] as const) {
+    for (const topic of [
+      "vllm",
+      "monitor",
+      "status",
+      "service",
+      "token-history",
+      "token-history-reset",
+    ] as const) {
       dependencies.broker.evict({ topic, cluster });
     }
-    publishVllm(unavailableClusterSnapshot(cluster, observedAtMs, null, null));
-    dependencies.broker.publish({ topic: "monitor", cluster, observedAtMs, payload: null });
-    dependencies.broker.publish({ topic: "status", cluster, observedAtMs, payload: null });
-    dependencies.broker.publish({
+    dependencies.broker.publishTransient({
+      topic: "vllm",
+      cluster,
+      observedAtMs,
+      payload: unavailableClusterSnapshot(cluster, observedAtMs, null, null),
+    });
+    dependencies.broker.publishTransient({
+      topic: "monitor",
+      cluster,
+      observedAtMs,
+      payload: null,
+    });
+    dependencies.broker.publishTransient({ topic: "status", cluster, observedAtMs, payload: null });
+    dependencies.broker.publishTransient({
       topic: "service",
       cluster,
       observedAtMs,
       payload: unavailableService(cluster),
+    });
+    dependencies.broker.publishTransient({
+      topic: "token-history-reset",
+      cluster,
+      observedAtMs,
+      payload: { reason: "topology-change" },
     });
   }
 

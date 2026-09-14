@@ -331,6 +331,64 @@ describe("createTokenHistoryRecorder", () => {
     ]);
   });
 
+  it("does not stop a runtime collector that replaced the recorder's old leader first", async () => {
+    let hosts = ["host-a"];
+    type Entry = {
+      leaderHost: string;
+      subscribers: Set<Listener>;
+      onStopped: Map<Listener, () => void>;
+    };
+    let entry: Entry | undefined;
+    const stop = vi.fn(() => {
+      entry = undefined;
+    });
+    const registry = {
+      subscribe: vi.fn(
+        (cluster: string, leaderHost: string, listener: Listener, onStopped = () => {}) => {
+          if (!entry || entry.leaderHost !== leaderHost) {
+            entry = { leaderHost, subscribers: new Set(), onStopped: new Map() };
+          }
+          const subscribedEntry = entry;
+          subscribedEntry.subscribers.add(listener);
+          subscribedEntry.onStopped.set(listener, onStopped);
+          return () => {
+            subscribedEntry.subscribers.delete(listener);
+            subscribedEntry.onStopped.delete(listener);
+          };
+        },
+      ),
+      getEntry: vi.fn(() => entry),
+      stop,
+    };
+    const { store } = storeSpy();
+    const recorder = createTokenHistoryRecorder({
+      clusters: async () => [{ name: "c032", hosts, is_default: true }],
+      registry: registry as never,
+      store,
+      now: () => 100_000,
+      wait: waitUntilStopped,
+    });
+
+    await recorder.start();
+    const oldEntry = entry!;
+    for (const stopped of oldEntry.onStopped.values()) stopped();
+    const runtimeListener = vi.fn();
+    entry = {
+      leaderHost: "host-b",
+      subscribers: new Set([runtimeListener]),
+      onStopped: new Map([[runtimeListener, () => {}]]),
+    };
+    hosts = ["host-b"];
+
+    await recorder.reconcile();
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(entry?.leaderHost).toBe("host-b");
+    expect(entry?.subscribers).toContain(runtimeListener);
+
+    await recorder.stop();
+  });
+
   it("contains asynchronous store failures and continues collecting", async () => {
     const registry = createFakeRegistry();
     const published: TokenObservation[] = [];

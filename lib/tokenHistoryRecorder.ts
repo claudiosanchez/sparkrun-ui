@@ -184,7 +184,15 @@ export function createTokenHistoryRecorder(dependencies: TokenHistoryRecorderDep
   }
 
   function removeSubscription(subscription: RecorderSubscription, stopEntry = true): void {
-    if (stopEntry) registry.stop?.(subscription.cluster);
+    // The dashboard runtime may have already replaced this cluster's collector
+    // with a new leader. Never stop that replacement while cleaning up the
+    // recorder's old subscription.
+    if (
+      stopEntry &&
+      registry.getEntry?.(subscription.cluster)?.leaderHost === subscription.hosts[0]
+    ) {
+      registry.stop?.(subscription.cluster);
+    }
     subscription.unsubscribe();
     if (!stopEntry && registry.getEntry?.(subscription.cluster)?.subscribers.size === 0) {
       registry.stop?.(subscription.cluster);
