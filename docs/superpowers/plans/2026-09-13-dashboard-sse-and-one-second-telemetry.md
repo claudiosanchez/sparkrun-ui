@@ -75,13 +75,13 @@ testable before a runtime publishes real events.
 
 **Acceptance criteria:**
 
-- [ ] Zod validates a discriminated event union with process-scoped revisions.
-- [ ] Input is strict empty object; host, URL, and interval fields are rejected.
-- [ ] A queue retains at most one pending event per source key, not one global
+- [x] Zod validates a discriminated event union with process-scoped revisions.
+- [x] Input is strict empty object; host, URL, and interval fields are rejected.
+- [x] A queue retains at most one pending event per source key, not one global
   event and not an unbounded array.
-- [ ] Abort, iterator return, and close remove listeners and resolve blocked
+- [x] Abort, iterator return, and close remove listeners and resolve blocked
   consumers exactly once.
-- [ ] SSE responses add no-cache and anti-buffering headers without teeing or
+- [x] SSE responses add no-cache and anti-buffering headers without teeing or
   consuming the response body.
 
 **Likely files:**
