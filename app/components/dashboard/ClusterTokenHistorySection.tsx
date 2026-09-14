@@ -7,6 +7,7 @@ import { ClusterTokenHistoryCard } from "./ClusterTokenHistoryCard";
 import { TOKEN_HISTORY_RANGES } from "./tokenHistoryData";
 
 const rangeTabIds: Record<TrendRange, string> = {
+  "5m": "token-history-tab-5m",
   "15m": "token-history-tab-15m",
   "1d": "token-history-tab-1d",
   "7d": "token-history-tab-7d",
@@ -18,8 +19,9 @@ export const ClusterTokenHistorySection = memo(function ClusterTokenHistorySecti
 }: {
   clusters: ClusterEntry[];
 }) {
-  const [range, setRange] = useState<TrendRange>("15m");
+  const [range, setRange] = useState<TrendRange>("5m");
   const tabRefs = useRef<Record<TrendRange, HTMLButtonElement | null>>({
+    "5m": null,
     "15m": null,
     "1d": null,
     "7d": null,

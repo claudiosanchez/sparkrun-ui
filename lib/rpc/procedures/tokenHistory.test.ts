@@ -23,7 +23,7 @@ vi.mock("@/lib/vllmCollectorRuntime", () => ({
 
 const client = createRouterClient({ get }, { context: {} });
 
-function result(range: "15m" | "1d" | "7d" | "30d"): TokenHistoryResult {
+function result(range: "5m" | "15m" | "1d" | "7d" | "30d"): TokenHistoryResult {
   const nowMs = 100_000;
   const policy = rangePolicy(range);
   return {
@@ -68,6 +68,21 @@ describe("tokenHistory.get", () => {
     });
   });
 
+  it("accepts five minutes for a saved cluster and keeps the response bounded", async () => {
+    query.mockResolvedValue(result("5m"));
+
+    const response = await client.get({ cluster: "c032", range: "5m" });
+
+    expect(response).toMatchObject({ cluster: "c032", range: "5m" });
+    expect(response.points).toHaveLength(300);
+    expect(response.points.length).toBeLessThanOrEqual(360);
+    expect(query).toHaveBeenCalledWith({
+      cluster: "c032",
+      range: "5m",
+      nowMs: expect.any(Number),
+    });
+  });
+
   it("does not accept a caller-supplied host, URL, or path", async () => {
     await expect(
       client.get({
@@ -86,5 +101,15 @@ describe("tokenHistory.get", () => {
 
     expect(response).toMatchObject({ cluster: "c032", range: "15m", state: "unavailable" });
     expect(response.points).toHaveLength(180);
+  });
+
+  it("returns 300 unavailable five-minute points when the history store cannot be read", async () => {
+    query.mockRejectedValue(new Error("disk unavailable"));
+
+    const response = await client.get({ cluster: "c032", range: "5m" });
+
+    expect(response).toMatchObject({ cluster: "c032", range: "5m", state: "unavailable" });
+    expect(response.points).toHaveLength(300);
+    expect(response.points.every((point) => point.tokensPerSecond === null)).toBe(true);
   });
 });

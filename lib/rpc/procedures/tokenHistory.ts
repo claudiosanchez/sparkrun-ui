@@ -1,9 +1,14 @@
 import { ORPCError, os } from "@orpc/server";
 import { z } from "zod";
-import { rangePolicy, type TokenHistoryResult, type TrendRange } from "@/lib/tokenHistory";
+import {
+  rangePolicy,
+  TREND_RANGES,
+  type TokenHistoryResult,
+  type TrendRange,
+} from "@/lib/tokenHistory";
 import { getProductionVllmCollectorRuntime } from "@/lib/vllmCollectorRuntime";
 
-const TrendRangeSchema = z.enum(["15m", "1d", "7d", "30d"]);
+const TrendRangeSchema = z.enum(TREND_RANGES);
 const TokenHistoryPointSchema = z.object({
   atMs: z.number().int().finite(),
   tokensPerSecond: z.number().finite().nonnegative().nullable(),

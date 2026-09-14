@@ -1,4 +1,10 @@
-export type TrendRange = "15m" | "1d" | "7d" | "30d";
+export type TrendRange = "5m" | "15m" | "1d" | "7d" | "30d";
+
+export const TREND_RANGES = ["5m", "15m", "1d", "7d", "30d"] as const satisfies readonly TrendRange[];
+
+export function isTrendRange(range: unknown): range is TrendRange {
+  return typeof range === "string" && TREND_RANGES.includes(range as TrendRange);
+}
 
 export type TokenObservation = {
   atMs: number;
@@ -48,6 +54,7 @@ export type TokenHistoryRangePolicy = {
 };
 
 export function rangePolicy(range: TrendRange): TokenHistoryRangePolicy {
+  if (range === "5m") return { durationMs: 5 * 60_000, bucketMs: 1_000 };
   if (range === "15m") return { durationMs: 15 * 60_000, bucketMs: 5_000 };
   if (range === "1d") return { durationMs: 24 * 60 * 60_000, bucketMs: 5 * 60_000 };
   if (range === "7d") return { durationMs: 7 * 24 * 60 * 60_000, bucketMs: 30 * 60_000 };

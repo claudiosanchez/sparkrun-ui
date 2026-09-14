@@ -32,8 +32,8 @@ const result: TokenHistoryResult = {
 };
 
 describe("token history dashboard data", () => {
-  it("supports exactly the four bounded history ranges", () => {
-    expect(TOKEN_HISTORY_RANGES).toEqual(["15m", "1d", "7d", "30d"]);
+  it("supports exactly the five bounded history ranges", () => {
+    expect(TOKEN_HISTORY_RANGES).toEqual(["5m", "15m", "1d", "7d", "30d"]);
   });
 
   it("keys cache entries by cluster and range", () => {

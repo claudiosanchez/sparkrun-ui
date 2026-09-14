@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/pro
 import { join } from "node:path";
 import {
   aggregateTokenHistory,
+  isTrendRange,
   rangePolicy,
   type TokenHistoryQuery,
   type TokenHistoryResult,
@@ -540,7 +541,7 @@ export function createTokenHistoryFileStore({
       return enqueue(async () => {
         if (closed) throw new Error("Token history store is closed");
         validateIdentifier(query.cluster, "cluster");
-        if (!["15m", "1d", "7d", "30d"].includes(query.range)) {
+        if (!isTrendRange(query.range)) {
           throw new Error("Invalid token history range");
         }
         const nowMs = query.nowMs ?? now();

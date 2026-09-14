@@ -3,6 +3,7 @@ import { aggregateTokenHistory, rangePolicy } from "./tokenHistory";
 
 describe("rangePolicy", () => {
   it("bounds each supported range to its server resolution", () => {
+    expect(rangePolicy("5m")).toEqual({ durationMs: 5 * 60_000, bucketMs: 1_000 });
     expect(rangePolicy("15m")).toEqual({ durationMs: 15 * 60_000, bucketMs: 5_000 });
     expect(rangePolicy("1d")).toEqual({ durationMs: 24 * 60 * 60_000, bucketMs: 5 * 60_000 });
     expect(rangePolicy("7d")).toEqual({ durationMs: 7 * 24 * 60 * 60_000, bucketMs: 30 * 60_000 });
@@ -14,6 +15,20 @@ describe("rangePolicy", () => {
 });
 
 describe("aggregateTokenHistory", () => {
+  it("materializes five minutes of seconds with zero, null gaps, and partial coverage", () => {
+    const policy = rangePolicy("5m");
+    const result = aggregateTokenHistory(
+      [{ atMs: 1_000, cluster: "c032", fingerprint: "a", tokensPerSecond: 0 }],
+      { range: "5m", nowMs: 300_000 },
+    );
+
+    expect(result.points).toHaveLength(300);
+    expect(result.points[1].tokensPerSecond).toBe(0);
+    expect(result.points[2].tokensPerSecond).toBeNull();
+    expect(result.coverage).toBe(1 / 300);
+    expect(result.state).toBe("partial");
+  });
+
   it("keeps a zero sample and materializes a missing bucket as null", () => {
     const policy = rangePolicy("15m");
     const result = aggregateTokenHistory(

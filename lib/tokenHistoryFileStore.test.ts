@@ -37,6 +37,17 @@ async function ndjsonFiles(directory: string): Promise<string[]> {
 }
 
 describe("createTokenHistoryFileStore", () => {
+  it("accepts the five-minute range without a range-specific failure", async () => {
+    const directory = await tempDir();
+    const store = createTokenHistoryFileStore({ dataDir: directory, now: () => 300_000 });
+
+    const result = await store.query({ cluster: "c032", range: "5m", nowMs: 300_000 });
+    await store.close();
+
+    expect(result).toMatchObject({ cluster: "c032", range: "5m", state: "empty" });
+    expect(result.points).toHaveLength(300);
+  });
+
   it("retains observations across a store restart", async () => {
     const directory = await tempDir();
     const first = createTokenHistoryFileStore({ dataDir: directory, now: () => 60_000 });
