@@ -99,7 +99,9 @@ export function applyReactorCapacityPolicies(
   policies: Readonly<Record<string, ReactorCapacityPolicy>>,
 ): ClusterEntry[] {
   return clusters.map((cluster) => {
-    const policy = policies[cluster.name];
+    const policy = Object.prototype.hasOwnProperty.call(policies, cluster.name)
+      ? policies[cluster.name]
+      : undefined;
     return { ...cluster, reactorCapacity: policy };
   });
 }
