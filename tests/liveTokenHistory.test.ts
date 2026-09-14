@@ -72,14 +72,14 @@ describe("applyLiveTokenHistory", () => {
     const next = applyLiveTokenHistory(base, [observation(300_500, 18), observation(301_000, 0)]);
 
     expect(next).not.toBe(base);
-    expect(next.fromMs).toBe(1_000);
-    expect(next.toMs).toBe(301_000);
+    expect(next.fromMs).toBe(2_000);
+    expect(next.toMs).toBe(302_000);
     expect(next.resolutionMs).toBe(1_000);
     expect(next.points).toHaveLength(300);
-    expect(next.points[0]).toEqual({ atMs: 1_000, tokensPerSecond: null });
-    expect(next.points[299]).toEqual({ atMs: 300_000, tokensPerSecond: 0 });
+    expect(next.points[0]).toEqual({ atMs: 2_000, tokensPerSecond: null });
+    expect(next.points[299]).toEqual({ atMs: 301_000, tokensPerSecond: 0 });
     expect(next.state).toBe("partial");
-    expect(next.coverage).toBe(2 / 300);
+    expect(next.coverage).toBe(3 / 300);
   });
 
   it("does not move a fetched window backward for an older replayed observation", () => {
@@ -90,6 +90,72 @@ describe("applyLiveTokenHistory", () => {
     expect(next.fromMs).toBe(0);
     expect(next.toMs).toBe(300_000);
     expect(next.points[299]).toEqual({ atMs: 299_000, tokensPerSecond: 16 });
+  });
+
+  it("keeps a newer fetched fingerprint instead of applying a stale older series", () => {
+    const base = historyResult({
+      fingerprint: "series-b",
+      fromMs: 100_000,
+      toMs: 400_000,
+      coverage: 1 / 300,
+      points: Array.from({ length: 300 }, (_, index) => ({
+        atMs: 100_000 + index * 1_000,
+        tokensPerSecond: index === 299 ? 25 : null,
+      })),
+    });
+
+    const next = applyLiveTokenHistory(base, [
+      observation(300_000, 10, { fingerprint: "series-a" }),
+    ]);
+
+    expect(next).toBe(base);
+    expect(next.fingerprint).toBe("series-b");
+    expect(next.points[299]).toEqual({ atMs: 399_000, tokensPerSecond: 25 });
+  });
+
+  it("accepts a genuinely newer fingerprint than the fetched base", () => {
+    const base = historyResult({
+      fingerprint: "series-b",
+      fromMs: 100_000,
+      toMs: 400_000,
+      coverage: 1 / 300,
+      points: Array.from({ length: 300 }, (_, index) => ({
+        atMs: 100_000 + index * 1_000,
+        tokensPerSecond: index === 299 ? 25 : null,
+      })),
+    });
+
+    const next = applyLiveTokenHistory(base, [
+      observation(399_500, null, { fingerprint: "series-c" }),
+    ]);
+
+    expect(next).not.toBe(base);
+    expect(next.fingerprint).toBe("series-c");
+    expect(next.state).toBe("empty");
+  });
+
+  it("places 300 consecutive one-second observations into 300 covered buckets", () => {
+    const base = historyResult({
+      state: "empty",
+      coverage: 0,
+      points: Array.from({ length: 300 }, (_, index) => ({
+        atMs: index * 1_000,
+        tokensPerSecond: null,
+      })),
+    });
+    const observations = Array.from({ length: 300 }, (_, index) =>
+      observation((index + 1) * 1_000, index + 1),
+    );
+
+    const next = applyLiveTokenHistory(base, observations);
+
+    expect(next.fromMs).toBe(1_000);
+    expect(next.toMs).toBe(301_000);
+    expect(next.points).toHaveLength(300);
+    expect(next.points[0]).toEqual({ atMs: 1_000, tokensPerSecond: 1 });
+    expect(next.points[299]).toEqual({ atMs: 300_000, tokensPerSecond: 300 });
+    expect(next.coverage).toBe(1);
+    expect(next.state).toBe("ready");
   });
 
   it("lets a newer null observation replace an old value in the same bucket", () => {

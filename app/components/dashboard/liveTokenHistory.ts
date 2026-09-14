@@ -39,7 +39,24 @@ export function applyLiveTokenHistory(
   if (newest === undefined) return result;
 
   const policy = rangePolicy(LIVE_RANGE);
-  const toMs = Math.max(result.toMs, newest.atMs);
+  let newestBaseValueAtMs: number | null = null;
+  for (const point of result.points) {
+    if (point.tokensPerSecond === null || !Number.isFinite(point.tokensPerSecond)) continue;
+    if (newestBaseValueAtMs === null || point.atMs > newestBaseValueAtMs) {
+      newestBaseValueAtMs = point.atMs;
+    }
+  }
+  if (
+    result.fingerprint !== null &&
+    newest.fingerprint !== result.fingerprint &&
+    newestBaseValueAtMs !== null &&
+    newest.atMs < newestBaseValueAtMs
+  ) {
+    return result;
+  }
+  const newestBucketEndMs =
+    Math.floor(newest.atMs / policy.bucketMs) * policy.bucketMs + policy.bucketMs;
+  const toMs = newest.atMs < result.toMs ? result.toMs : Math.max(result.toMs, newestBucketEndMs);
   const fromMs = toMs - policy.durationMs;
   const liveFingerprint = newest.fingerprint;
   const points = Array.from({ length: LIVE_POINT_LIMIT }, (_, index) => ({

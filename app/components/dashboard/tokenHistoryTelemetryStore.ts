@@ -1,8 +1,8 @@
-import {
-  DashboardTelemetryEventSchema,
-  type DashboardTelemetryEvent,
-} from "@/lib/dashboardTelemetry";
 import type { TokenObservation } from "@/lib/tokenHistory";
+import {
+  TokenHistoryTelemetryEventSchema,
+  type TokenHistoryTelemetryEvent,
+} from "@/lib/tokenHistoryTelemetry";
 import { reduceLiveTokenObservations } from "./liveTokenHistory";
 
 export type TokenHistoryTelemetrySnapshot = Readonly<{
@@ -41,10 +41,10 @@ export function createTokenHistoryTelemetryStore(): TokenHistoryTelemetryStore {
       return connectionHealthy;
     },
     publish(input) {
-      const parsed = DashboardTelemetryEventSchema.safeParse(input);
-      if (!parsed.success || parsed.data.topic !== "token-history") return false;
+      const parsed = TokenHistoryTelemetryEventSchema.safeParse(input);
+      if (!parsed.success) return false;
 
-      const event: Extract<DashboardTelemetryEvent, { topic: "token-history" }> = parsed.data;
+      const event: TokenHistoryTelemetryEvent = parsed.data;
       const previous = getSnapshot(event.cluster);
       const observations = reduceLiveTokenObservations(previous.observations, event.payload);
       if (observations === previous.observations) return false;

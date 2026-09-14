@@ -129,6 +129,16 @@ describe("token history dashboard data", () => {
     );
   });
 
+  it("keeps the client telemetry store on the portable token-history schema boundary", () => {
+    const storeSource = readFileSync(
+      new URL("../app/components/dashboard/tokenHistoryTelemetryStore.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(storeSource).toContain("@/lib/tokenHistoryTelemetry");
+    expect(storeSource).not.toContain("@/lib/dashboardTelemetry");
+  });
+
   it("keeps a shared request alive until its final card releases it", async () => {
     const owner = new AbortController();
     const otherCard = new AbortController();
