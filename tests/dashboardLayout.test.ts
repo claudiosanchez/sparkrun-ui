@@ -1,10 +1,12 @@
 import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { DashboardLive } from "@/app/components/dashboard/DashboardLive";
 import { ClusterOverviewSection } from "@/app/components/dashboard/ClusterOverviewSection";
 import { ClusterStatusSchema } from "@/lib/schemas";
+import { ReactorCard } from "@/app/components/dashboard/ReactorCard";
 import { ReactorRings } from "@/app/components/dashboard/ReactorRings";
+import * as ReactorStateContext from "@/app/components/dashboard/ReactorStateContext";
 import type { ReactorState } from "@/lib/reactorState";
 
 function semanticRings(overrides: Partial<ReactorState["rings"]> = {}): ReactorState["rings"] {
@@ -191,8 +193,16 @@ it("renders semantic pressure rings without a memory or GPU ring", () => {
   expect(html).not.toContain("Total unified memory");
   expect(html).not.toContain("GPU compute utilization");
   expect(html.match(/role="progressbar"/g) ?? []).toHaveLength(3);
+  expect(html.match(/pathLength="100"/g) ?? []).toHaveLength(3);
+  for (const radius of [54, 42, 30]) {
+    expect(html).toMatch(
+      new RegExp(`<circle[^>]*r="${radius}"[^>]*pathLength="100"[^>]*role="progressbar"`),
+    );
+  }
   expect(html).toContain('aria-valuetext="78.0% · Watch"');
   expect(html).toContain('stroke-dasharray="78 100"');
+  expect(html).toContain("bg-amber-500");
+  expect(html).toContain("stroke-amber-500");
 });
 
 it("renders a target-not-set ring without an aria value", () => {
@@ -285,4 +295,44 @@ it("keeps the existing request facts below the rings", () => {
     expect(html).toContain(label);
   }
   expect(html).toContain("Client and session counts are not collected");
+});
+
+it("keeps GPU utilization in the ReactorCard hardware grid, not the rings", () => {
+  const cluster = { name: "lab", hosts: ["127.0.0.1"], is_default: true };
+  const state: ReactorState = {
+    name: "lab",
+    hostText: "127.0.0.1",
+    telemetryState: "live",
+    telemetryText: "Telemetry live",
+    freshnessText: "Host reachable · receiving measurements",
+    serviceState: "ready",
+    serviceText: "Model API ready",
+    modelText: "test-model",
+    managedWorkloadCount: 0,
+    managedWorkloadText: "0 managed workloads",
+    rings: semanticRings(),
+    inference,
+    trends: { cpu: [], gpu: [] },
+    metrics: {
+      cpuPercent: 12.5,
+      gpuPercent: 70,
+      gpuText: "70%",
+      cpuText: "12.5%",
+      memoryText: "64.0 / 128.0 GB",
+      gpuMemoryText: "—",
+      gpuTemperatureText: "62°C",
+      cpuTemperatureText: "55°C",
+      powerText: "42.5 W",
+    },
+  };
+  const useReactorState = vi.spyOn(ReactorStateContext, "useReactorState").mockReturnValue(state);
+
+  try {
+    const html = renderToStaticMarkup(createElement(ReactorCard, { cluster }));
+
+    expect(html).toMatch(/<dt[^>]*>GPU utilization<\/dt><dd[^>]*>70%<\/dd>/);
+    expect(html).not.toContain("GPU compute utilization");
+  } finally {
+    useReactorState.mockRestore();
+  }
 });
