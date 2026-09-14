@@ -5,6 +5,10 @@ import { healthForHost } from "./rpc/procedures/services";
 import { fetchStatus } from "./rpc/procedures/status";
 import type { ClusterEntry, ClusterStatus } from "./schemas";
 import type { ServiceHealth } from "./serviceHealth";
+import {
+  reconcileProductionTokenHistoryRecorder,
+  startTokenHistoryRecorder,
+} from "./tokenHistoryRecorder";
 import { POLL_INTERVAL_MS, type VllmCollectorRegistry } from "./vllmCollector";
 import {
   getProductionVllmCollectorRuntime,
@@ -37,6 +41,8 @@ export type DashboardTelemetryRuntimeDependencies = {
     host: string | null,
     signal?: AbortSignal,
   ) => Promise<ServiceHealth>;
+  /** Reconcile recorder sources against this exact runtime topology before a reset. */
+  reconcileTokenHistoryRecorder?: (topology: readonly ClusterEntry[]) => Promise<boolean>;
   wallNow?: () => number;
   monotonicNow?: () => number;
   wait?: Wait;
@@ -115,6 +121,8 @@ export function createDashboardTelemetryRuntime(
   const streamMonitorSource = dependencies.streamMonitor ?? streamMonitor;
   const fetchClusterStatus = dependencies.fetchStatus ?? fetchStatus;
   const fetchServiceHealth = dependencies.healthForHost ?? healthForHost;
+  const reconcileTokenHistoryRecorder =
+    dependencies.reconcileTokenHistoryRecorder ?? reconcileProductionTokenHistoryRecorder;
   const wallNow = dependencies.wallNow ?? (() => Date.now());
   const monotonicNow = dependencies.monotonicNow ?? (() => performance.now());
   const wait = dependencies.wait ?? defaultWait;
@@ -322,22 +330,42 @@ export function createDashboardTelemetryRuntime(
       desired.set(cluster.name, targetFor(cluster));
     }
 
-    for (const [cluster, source] of active) {
-      if (desired.has(cluster)) continue;
-      stopCluster(source);
-      active.delete(cluster);
-      publishClusterUnavailable(cluster);
-    }
-
+    const resetSources = new Map<string, ActiveCluster>();
+    const startTargets = new Map<string, Target>();
     for (const [cluster, target] of desired) {
       const source = active.get(cluster);
-      if (source && source.target.fingerprint === target.fingerprint && !source.vllmStopped)
+      if (!source) {
+        startTargets.set(cluster, target);
         continue;
+      }
+      if (source.target.fingerprint === target.fingerprint && !source.vllmStopped) continue;
+      resetSources.set(cluster, source);
+      startTargets.set(cluster, target);
+    }
+    for (const [cluster, source] of active) {
+      if (!desired.has(cluster)) resetSources.set(cluster, source);
+    }
+
+    let recorderSynced = false;
+    try {
+      // Pass every exact discovery snapshot to the recorder. Once it owns a
+      // reset, its independent discovery result may be stale; additions must
+      // therefore advance that same authoritative topology too.
+      recorderSynced = await reconcileTokenHistoryRecorder(clusters);
+    } catch {
+      recorderSynced = false;
+    }
+    if (controller.signal.aborted || (resetSources.size > 0 && !recorderSynced)) return;
+
+    for (const [cluster, source] of resetSources) {
       if (source) {
         stopCluster(source);
         active.delete(cluster);
         publishClusterUnavailable(cluster);
       }
+    }
+    for (const [cluster, target] of startTargets) {
+      if (active.has(cluster)) continue;
       active.set(cluster, startCluster(target));
     }
   }
@@ -407,6 +435,7 @@ export function startDashboardTelemetryRuntime(): () => void {
 
   let runtime: ReturnType<typeof createDashboardTelemetryRuntime> | null = null;
   try {
+    startTokenHistoryRecorder();
     const vllmRuntime = getProductionVllmCollectorRuntime();
     runtime = createDashboardTelemetryRuntime({
       listSavedClusters:

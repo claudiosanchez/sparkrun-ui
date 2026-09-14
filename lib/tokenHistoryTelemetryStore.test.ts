@@ -18,6 +18,26 @@ function observationEvent(cluster: string, revision: number) {
 }
 
 describe("token history telemetry store", () => {
+  it("invalidates every observed live overlay on a successful SSE reconnect", () => {
+    const store = createTokenHistoryTelemetryStore();
+    const c032Listener = vi.fn();
+    const c458Listener = vi.fn();
+    store.subscribe("c032", c032Listener);
+    store.subscribe("c458", c458Listener);
+
+    store.beginConnection();
+    expect(store.publish(observationEvent("c032", 10))).toBe(true);
+    expect(store.getTopologyGeneration("c458")).toBe(0);
+
+    store.beginConnection();
+
+    expect(store.getSnapshot("c032").observations).toEqual([]);
+    expect(store.getTopologyGeneration("c032")).toBe(1);
+    expect(store.getTopologyGeneration("c458")).toBe(1);
+    expect(c032Listener).toHaveBeenCalledTimes(2);
+    expect(c458Listener).toHaveBeenCalledTimes(1);
+  });
+
   it("clears only the live overlay when the shared feed reports a topology change", () => {
     const store = createTokenHistoryTelemetryStore();
     const listener = vi.fn();

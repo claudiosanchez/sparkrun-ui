@@ -128,6 +128,7 @@ describe("token history dashboard data", () => {
     expect(providerSource).toContain("new AbortController()");
     expect(providerSource).toContain("waitForRetry");
     expect(providerSource).toContain("store.beginConnection()");
+    expect(providerSource).toContain("tokenHistoryTelemetryStore.beginConnection()");
     expect(providerSource).toContain("setConnectionHealthy(false)");
     expect(providerSource).not.toContain("EventSource");
     expect(providerSource).not.toContain("tokenHistory.stream");

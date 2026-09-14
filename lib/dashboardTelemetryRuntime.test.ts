@@ -3,6 +3,8 @@ import { createDashboardTelemetryBroker } from "./dashboardTelemetry";
 import { createDashboardTelemetryRuntime } from "./dashboardTelemetryRuntime";
 import type { MonitorTick } from "./monitor";
 import type { ClusterStatus } from "./schemas";
+import type { TokenHistoryStore } from "./tokenHistory";
+import { createTokenHistoryRecorder } from "./tokenHistoryRecorder";
 import type { VllmClusterSnapshot } from "./vllmMetrics";
 
 type Listener = (snapshot: VllmClusterSnapshot) => void;
@@ -32,6 +34,61 @@ function createRegistry() {
     }),
     emit(cluster: string, next: VllmClusterSnapshot) {
       listeners.get(cluster)?.(next);
+    },
+  };
+}
+
+function createSharedRegistry() {
+  type Entry = {
+    leaderHost: string;
+    subscribers: Set<Listener>;
+    onStopped: Map<Listener, () => void>;
+  };
+  const entries = new Map<string, Entry>();
+
+  const stopEntry = (cluster: string, entry: Entry) => {
+    for (const onStopped of entry.onStopped.values()) onStopped();
+    entry.subscribers.clear();
+    entry.onStopped.clear();
+    if (entries.get(cluster) === entry) entries.delete(cluster);
+  };
+
+  return {
+    subscribe: vi.fn(
+      (
+        cluster: string,
+        leaderHost: string,
+        listener: Listener,
+        onStopped: () => void = () => {},
+      ) => {
+        let entry = entries.get(cluster);
+        if (entry && entry.leaderHost !== leaderHost) {
+          stopEntry(cluster, entry);
+          entry = undefined;
+        }
+        if (!entry) {
+          entry = { leaderHost, subscribers: new Set(), onStopped: new Map() };
+          entries.set(cluster, entry);
+        }
+        entry.subscribers.add(listener);
+        entry.onStopped.set(listener, onStopped);
+        const subscribedEntry = entry;
+        return () => {
+          subscribedEntry.subscribers.delete(listener);
+          subscribedEntry.onStopped.delete(listener);
+        };
+      },
+    ),
+    getEntry: (cluster: string) => entries.get(cluster),
+    stop: (cluster: string) => {
+      const entry = entries.get(cluster);
+      if (entry) stopEntry(cluster, entry);
+    },
+    emitFrom(cluster: string, leaderHost: string, next: VllmClusterSnapshot): boolean {
+      const entry = entries.get(cluster);
+      if (!entry || entry.leaderHost !== leaderHost) return false;
+      for (const listener of entry.subscribers) listener(next);
+      return true;
     },
   };
 }
@@ -253,5 +310,328 @@ describe("dashboard telemetry runtime", () => {
     await active.return();
     await reconnect.return();
     await runtime.stop();
+  });
+
+  it("retains the active source when the recorder cannot confirm a topology change", async () => {
+    const registry = createRegistry();
+    const broker = createDashboardTelemetryBroker();
+    let clusters = [{ name: "c032", hosts: ["host-a"], is_default: true }];
+    const reconcileTokenHistoryRecorder = vi.fn(async () => false);
+    const runtime = createDashboardTelemetryRuntime({
+      listSavedClusters: async () => clusters,
+      registry: registry as never,
+      broker,
+      streamMonitor: noMonitor,
+      fetchStatus: async (_cluster, signal) => {
+        await waitForAbort(signal);
+        throw new Error("stopped");
+      },
+      healthForHost: async (_cluster, _host, signal) => {
+        await waitForAbort(signal);
+        throw new Error("stopped");
+      },
+      wait: async (_ms, signal) => waitForAbort(signal),
+      wallNow: () => 20_000,
+      monotonicNow: () => 20_000,
+      reconcileTokenHistoryRecorder,
+    });
+
+    await runtime.start();
+    const active = broker.subscribe();
+    while (active.pendingEventCount > 0) await active.next();
+    clusters = [{ name: "c032", hosts: ["host-b"], is_default: true }];
+
+    await runtime.reconcile();
+
+    expect(reconcileTokenHistoryRecorder).toHaveBeenCalledWith([
+      { name: "c032", hosts: ["host-b"], is_default: true },
+    ]);
+    expect(runtime.activeClusters.get("c032")?.target.leaderHost).toBe("host-a");
+    const transitions = [];
+    while (active.pendingEventCount > 0) {
+      const next = await active.next();
+      if (!next.done) transitions.push(next.value);
+    }
+    expect(transitions).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ topic: "token-history-reset", cluster: "c032" }),
+      ]),
+    );
+
+    await active.return();
+    await runtime.stop();
+  });
+
+  it("waits for recorder topology reconciliation before publishing a reset", async () => {
+    const registry = createRegistry();
+    const broker = createDashboardTelemetryBroker();
+    let clusters = [{ name: "c032", hosts: ["host-a"], is_default: true }];
+    let releaseBarrier!: (value: boolean) => void;
+    const barrier = new Promise<boolean>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    let entered!: () => void;
+    const enteredBarrier = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let holdTransition = false;
+    const reconcileTokenHistoryRecorder = vi.fn(() => {
+      if (!holdTransition) return Promise.resolve(true);
+      entered();
+      return barrier;
+    });
+    const runtime = createDashboardTelemetryRuntime({
+      listSavedClusters: async () => clusters,
+      registry: registry as never,
+      broker,
+      streamMonitor: noMonitor,
+      fetchStatus: async (_cluster, signal) => {
+        await waitForAbort(signal);
+        throw new Error("stopped");
+      },
+      healthForHost: async (_cluster, _host, signal) => {
+        await waitForAbort(signal);
+        throw new Error("stopped");
+      },
+      wait: async (_ms, signal) => waitForAbort(signal),
+      wallNow: () => 20_000,
+      monotonicNow: () => 20_000,
+      reconcileTokenHistoryRecorder,
+    });
+
+    await runtime.start();
+    const active = broker.subscribe();
+    while (active.pendingEventCount > 0) await active.next();
+    holdTransition = true;
+    clusters = [];
+    const reconciling = runtime.reconcile();
+    await enteredBarrier;
+
+    expect(reconcileTokenHistoryRecorder).toHaveBeenCalledWith([]);
+    expect(active.pendingEventCount).toBe(0);
+
+    releaseBarrier(true);
+    await reconciling;
+    const transitions = [];
+    while (active.pendingEventCount > 0) {
+      const next = await active.next();
+      if (!next.done) transitions.push(next.value);
+    }
+    expect(transitions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ topic: "token-history-reset", cluster: "c032" }),
+      ]),
+    );
+
+    await active.return();
+    await runtime.stop();
+  });
+
+  it("coordinates recorder replacement before emitting a host-change reset", async () => {
+    const registry = createSharedRegistry();
+    const broker = createDashboardTelemetryBroker();
+    let clusters = [{ name: "c032", hosts: ["host-a"], is_default: true }];
+    const store: TokenHistoryStore = {
+      record: vi.fn(async () => undefined),
+      query: vi.fn(),
+      close: vi.fn(async () => undefined),
+    };
+    const recorder = createTokenHistoryRecorder({
+      clusters: async () => clusters,
+      registry: registry as never,
+      store,
+      now: () => 20_000,
+      wait: async (_ms, signal) => waitForAbort(signal),
+      publishObservation: (observation) => {
+        broker.publish({
+          topic: "token-history",
+          cluster: observation.cluster,
+          observedAtMs: observation.atMs,
+          payload: observation,
+        });
+      },
+    });
+    const runtime = createDashboardTelemetryRuntime({
+      listSavedClusters: async () => clusters,
+      registry: registry as never,
+      broker,
+      streamMonitor: noMonitor,
+      fetchStatus: async (_cluster, signal) => {
+        await waitForAbort(signal);
+        throw new Error("stopped");
+      },
+      healthForHost: async (_cluster, _host, signal) => {
+        await waitForAbort(signal);
+        throw new Error("stopped");
+      },
+      wait: async (_ms, signal) => waitForAbort(signal),
+      wallNow: () => 20_000,
+      monotonicNow: () => 20_000,
+      reconcileTokenHistoryRecorder: (topology) => recorder.reconcile(topology),
+    });
+
+    await recorder.start();
+    await runtime.start();
+    const active = broker.subscribe();
+    try {
+      expect(registry.emitFrom("c032", "host-a", snapshot("c032", 10_000))).toBe(true);
+      while (active.pendingEventCount > 0) await active.next();
+
+      clusters = [{ name: "c032", hosts: ["host-b"], is_default: true }];
+      await runtime.reconcile();
+
+      const transitions = [];
+      while (active.pendingEventCount > 0) {
+        const next = await active.next();
+        if (!next.done) transitions.push(next.value);
+      }
+      expect(transitions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ topic: "token-history-reset", cluster: "c032" }),
+        ]),
+      );
+      expect(registry.emitFrom("c032", "host-a", snapshot("c032", 11_000))).toBe(false);
+      expect(registry.emitFrom("c032", "host-b", snapshot("c032", 12_000))).toBe(true);
+
+      const refreshed = [];
+      while (active.pendingEventCount > 0) {
+        const next = await active.next();
+        if (!next.done) refreshed.push(next.value);
+      }
+      expect(refreshed).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            topic: "token-history",
+            cluster: "c032",
+            observedAtMs: 12_000,
+            payload: expect.objectContaining({ atMs: 12_000, tokensPerSecond: 12 }),
+          }),
+        ]),
+      );
+    } finally {
+      await active.return();
+      await runtime.stop();
+      await recorder.stop();
+    }
+  });
+
+  it("uses the runtime topology to remove a stale recorder before a removal reset", async () => {
+    const registry = createSharedRegistry();
+    const broker = createDashboardTelemetryBroker();
+    let runtimeClusters = [{ name: "c032", hosts: ["host-a"], is_default: true }];
+    const recorderClusters = [{ name: "c032", hosts: ["host-a"], is_default: true }];
+    const store: TokenHistoryStore = {
+      record: vi.fn(async () => undefined),
+      query: vi.fn(),
+      close: vi.fn(async () => undefined),
+    };
+    const recorder = createTokenHistoryRecorder({
+      // Deliberately stale after removal: the barrier must use runtimeClusters.
+      clusters: async () => recorderClusters,
+      registry: registry as never,
+      store,
+      now: () => 20_000,
+      wait: async (_ms, signal) => waitForAbort(signal),
+      publishObservation: (observation) => {
+        broker.publish({
+          topic: "token-history",
+          cluster: observation.cluster,
+          observedAtMs: observation.atMs,
+          payload: observation,
+        });
+      },
+    });
+    const runtime = createDashboardTelemetryRuntime({
+      listSavedClusters: async () => runtimeClusters,
+      registry: registry as never,
+      broker,
+      streamMonitor: noMonitor,
+      fetchStatus: async (_cluster, signal) => {
+        await waitForAbort(signal);
+        throw new Error("stopped");
+      },
+      healthForHost: async (_cluster, _host, signal) => {
+        await waitForAbort(signal);
+        throw new Error("stopped");
+      },
+      wait: async (_ms, signal) => waitForAbort(signal),
+      wallNow: () => 20_000,
+      monotonicNow: () => 20_000,
+      reconcileTokenHistoryRecorder: (topology) => recorder.reconcile(topology),
+    });
+
+    await recorder.start();
+    await runtime.start();
+    const active = broker.subscribe();
+    let reconnect: ReturnType<typeof broker.subscribe> | undefined;
+    try {
+      expect(registry.emitFrom("c032", "host-a", snapshot("c032", 10_000))).toBe(true);
+      while (active.pendingEventCount > 0) await active.next();
+
+      runtimeClusters = [];
+      await runtime.reconcile();
+
+      const transitions = [];
+      while (active.pendingEventCount > 0) {
+        const next = await active.next();
+        if (!next.done) transitions.push(next.value);
+      }
+      expect(transitions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ topic: "token-history-reset", cluster: "c032" }),
+        ]),
+      );
+      expect(recorder.subscriptions.size).toBe(0);
+      expect(runtime.activeClusters.has("c032")).toBe(false);
+
+      // The recorder's later independent discovery result is still stale.
+      // It must retain the runtime's authoritative removal instead of
+      // subscribing to host-a again.
+      await recorder.reconcile();
+      expect(recorder.subscriptions.size).toBe(0);
+
+      // If the recorder had only re-read its stale topology, this would publish
+      // a new cached token-history event after the reset.
+      expect(registry.emitFrom("c032", "host-a", snapshot("c032", 11_000))).toBe(false);
+      expect(active.pendingEventCount).toBe(0);
+
+      reconnect = broker.subscribe();
+      const replayed = [];
+      while (reconnect.pendingEventCount > 0) {
+        const next = await reconnect.next();
+        if (!next.done) replayed.push(next.value);
+      }
+      expect(replayed).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ topic: "token-history", cluster: "c032" }),
+        ]),
+      );
+
+      // A later addition has no existing runtime source to reset. It still
+      // must give the recorder the new authoritative topology.
+      runtimeClusters = [{ name: "c032", hosts: ["host-b"], is_default: true }];
+      await runtime.reconcile();
+      expect(recorder.subscriptions.get("c032")?.hosts).toEqual(["host-b"]);
+      expect(registry.emitFrom("c032", "host-b", snapshot("c032", 12_000))).toBe(true);
+      const restored = [];
+      while (active.pendingEventCount > 0) {
+        const next = await active.next();
+        if (!next.done) restored.push(next.value);
+      }
+      expect(restored).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            topic: "token-history",
+            cluster: "c032",
+            observedAtMs: 12_000,
+          }),
+        ]),
+      );
+    } finally {
+      await reconnect?.return();
+      await active.return();
+      await runtime.stop();
+      await recorder.stop();
+    }
   });
 });

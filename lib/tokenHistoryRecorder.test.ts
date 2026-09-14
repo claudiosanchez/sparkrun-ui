@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TokenHistoryStore, TokenObservation } from "./tokenHistory";
-import { createTokenHistoryRecorder, fingerprintHosts } from "./tokenHistoryRecorder";
+import {
+  createTokenHistoryRecorder,
+  fingerprintHosts,
+  reconcileProductionTokenHistoryRecorder,
+} from "./tokenHistoryRecorder";
 import type { VllmClusterSnapshot } from "./vllmMetrics";
 
 type Listener = (snapshot: VllmClusterSnapshot) => void;
@@ -93,6 +97,19 @@ afterEach(() => {
 });
 
 describe("createTokenHistoryRecorder", () => {
+  it("does not confirm a topology reset for a legacy recorder without a reconcile hook", async () => {
+    const previousStop = globalThis.__sparkrunTokenHistoryStop;
+    const previousReconcile = globalThis.__sparkrunTokenHistoryReconcile;
+    globalThis.__sparkrunTokenHistoryStop = () => {};
+    globalThis.__sparkrunTokenHistoryReconcile = undefined;
+    try {
+      expect(await reconcileProductionTokenHistoryRecorder([])).toBe(false);
+    } finally {
+      globalThis.__sparkrunTokenHistoryStop = previousStop;
+      globalThis.__sparkrunTokenHistoryReconcile = previousReconcile;
+    }
+  });
+
   it("requests one-second collection without a browser subscriber", async () => {
     const registry = createFakeRegistry();
     const { store } = storeSpy();
@@ -266,7 +283,7 @@ describe("createTokenHistoryRecorder", () => {
     await recorder.start();
     const subscription = registry.subscriptions.get("c032");
     expect(subscription?.hosts).toBe("host-a");
-    await recorder.reconcile();
+    expect(await recorder.reconcile()).toBe(false);
     expect(registry.subscriptions.get("c032")).toBe(subscription);
     await recorder.stop();
   });
