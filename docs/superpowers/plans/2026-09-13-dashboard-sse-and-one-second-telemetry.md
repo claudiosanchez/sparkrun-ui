@@ -43,13 +43,13 @@ time.
 
 **Acceptance criteria:**
 
-- [ ] Recorder subscription requests 1,000 ms.
-- [ ] vLLM registry defaults to 1,000 ms and does not downgrade when a browser
+- [x] Recorder subscription requests 1,000 ms.
+- [x] vLLM registry defaults to 1,000 ms and does not downgrade when a browser
   disconnects.
-- [ ] One scheduled tick performs exactly one fetch; slow fetches never overlap.
-- [ ] A changed requested interval wakes the loop safely and recalculates the
+- [x] One scheduled tick performs exactly one fetch; slow fetches never overlap.
+- [x] A changed requested interval wakes the loop safely and recalculates the
   next deadline.
-- [ ] Existing stale/unavailable/zero Tokens/s behavior remains intact.
+- [x] Existing stale/unavailable/zero Tokens/s behavior remains intact.
 
 **Likely files:**
 
@@ -62,76 +62,171 @@ time.
 typecheck, lint, production build. Deploy this slice immediately and compare
 multiple persisted Coxshire sample timestamps.
 
-**Dependencies:** None.
+**Dependencies:** None. Released in PR #5 as merged commit
+`5b3ebb503443df653bc55836a3086d8d73c84c2c`; live C032/C458 samples measured
+1,000–1,002 ms apart.
 
-## Task 2: Shared Dashboard Telemetry Runtime and Typed SSE Contract
+## Task 2: SSE Contract, Bounded Queue, and Route Headers
 
-**Description:** Add a server-owned runtime for the dashboard's vLLM, monitor,
-status, service-health, and top-card monitor sources. Expose its cached,
-multiplexed updates as `rpc.telemetry.stream({})` over oRPC SSE.
+**Description:** Create the typed dashboard event contract, a per-connection
+latest-value queue, and the strict `rpc.telemetry.stream({})` procedure. This
+foundation has no collector ownership yet; it makes the transport safe and
+testable before a runtime publishes real events.
 
 **Acceptance criteria:**
 
-- [ ] Runtime starts once from `instrumentation.ts` and reconciles saved clusters.
-- [ ] Source cadences are 1s vLLM, 2s monitor, 3s status, and 10s service health.
-- [ ] The stream uses a Zod discriminated event union and validates no client
-  host, URL, or cadence.
-- [ ] Cached latest state arrives first; slow consumers have a bounded
-  latest-value queue; abort releases every listener and timer.
-- [ ] Existing stream procedures remain available as compatibility adapters.
-- [ ] SSE responses have anti-buffering and no-cache headers.
+- [ ] Zod validates a discriminated event union with process-scoped revisions.
+- [ ] Input is strict empty object; host, URL, and interval fields are rejected.
+- [ ] A queue retains at most one pending event per source key, not one global
+  event and not an unbounded array.
+- [ ] Abort, iterator return, and close remove listeners and resolve blocked
+  consumers exactly once.
+- [ ] SSE responses add no-cache and anti-buffering headers without teeing or
+  consuming the response body.
 
 **Likely files:**
 
-- `instrumentation.ts`
-- `lib/dashboardTelemetry.ts` (new)
-- `lib/dashboardTelemetryRuntime.ts` (new)
-- `lib/rpc/procedures/telemetry.ts` (new)
+- `lib/dashboardTelemetry.ts` (new) and test
+- `lib/rpc/procedures/telemetry.ts` (new) and test
 - `lib/rpc/router.ts`
-- `app/rpc/[[...rest]]/route.ts`
-- `lib/rpc/procedures/{status,monitor,services,vllmMetrics}.ts`
-- focused unit and route-stream tests
+- `app/rpc/[[...rest]]/route.ts` and route-stream test
 
-**Verification:** Runtime fan-out/cancellation/queue tests; route content type
-and headers; two logical client streams share one source; full suite/typecheck/
-lint/build. Merge and deploy this server slice before wiring the dashboard.
+**Verification:** Queue/abort/strict-input tests; direct route SSE header and
+cancellation test; full suite/typecheck/lint/build. Merge, deploy, and smoke
+test the contract slice before adding a live publisher.
 
 **Dependencies:** Task 1.
 
-## Task 3: One Dashboard SSE Client and Selective Store Updates
+## Task 3: Process-Global vLLM Publisher for the SSE Feed
 
-**Description:** Replace dashboard-owned per-cluster stream loops with one
-provider consuming `rpc.telemetry.stream({})`. Publish events to a narrow
-external store so only subscribers to the changed topic rerender.
+**Description:** Start one process-owned publisher from instrumentation. It
+reuses the existing 1 Hz vLLM registry, reconciles saved clusters, caches the
+latest vLLM event, and fans it out to `telemetry.stream` clients.
 
 **Acceptance criteria:**
 
-- [ ] A dashboard browser tab opens one SSE connection.
-- [ ] `DashboardLive` no longer maintains a status map or re-renders on every
-  status event.
-- [ ] Top overview uses only `overview-monitor`; workload/error sections use
-  status-only subscriptions.
-- [ ] A C032 vLLM event causes no C458 component or workload-section commit.
-- [ ] Existing cards, order, and labels remain unchanged.
+- [ ] Startup is idempotent and no browser connection starts another collector.
+- [ ] Two logical clients share one source subscription and receive cached-first
+  and later events.
+- [ ] Discovery failure retains the last known subscriptions; removed or changed
+  clusters clean up their source and cached event.
+- [ ] Existing vLLM stream procedure remains available for non-dashboard users.
+
+**Likely files:**
+
+- `lib/dashboardTelemetryRuntime.ts` (new) and test
+- `instrumentation.ts`
+- `lib/rpc/procedures/telemetry.ts`
+- runtime integration test
+
+**Verification:** Fan-out, cache, reconciliation, start/stop, and source-count
+tests; full suite/typecheck/lint/build. Merge and deploy the server SSE slice.
+
+**Dependencies:** Task 2.
+
+## Task 4: Dashboard SSE Store and VLLM Provider
+
+**Description:** Add one dashboard-owned browser connection to the new SSE feed
+and publish vLLM events into a narrow external store. This is the client-side
+foundation; existing monitor/status streams remain temporarily compatible.
+
+**Acceptance criteria:**
+
+- [ ] A dashboard tab opens exactly one telemetry SSE connection.
+- [ ] The store preserves unchanged cluster snapshots and supports cluster/topic
+  subscriptions.
+- [ ] A C032 vLLM event does not notify C458 subscribers.
+- [ ] Reconnect preserves the last known value until the next event.
 
 **Likely files:**
 
 - `app/components/dashboard/DashboardTelemetryProvider.tsx` (new)
-- `app/components/dashboard/dashboardTelemetryStore.ts` (new)
+- `app/components/dashboard/dashboardTelemetryStore.ts` (new) and test
 - `app/components/dashboard/ReactorStateContext.tsx`
+- dashboard connection test
+
+**Verification:** Store selector and connection lifecycle tests; full suite/
+typecheck/lint/build.
+
+**Dependencies:** Task 3.
+
+## Task 5: Migrate Twin Reactor vLLM Updates and Isolate Cards
+
+**Description:** Remove the dashboard's per-cluster vLLM streams and consume
+the shared SSE store in the Twin Reactor path. Keep monitor, status, service,
+card order, labels, and missing-data behavior unchanged.
+
+**Acceptance criteria:**
+
+- [ ] The dashboard has no `rpc.vllmMetrics.stream` call per reactor card.
+- [ ] C032 Tokens/s refreshes from the shared 1 Hz feed without rerendering the
+  C458 card, workload list, or top overview.
+- [ ] Existing cards, layout, labels, and accessibility output remain intact.
+
+**Likely files:**
+
 - `app/components/dashboard/useReactor.ts`
+- `app/components/dashboard/{ReactorCard,ReactorRings,ClusterOverviewCard}.tsx`
+- dashboard layout/connection/render tests
+
+**Verification:** React render-isolation tests, browser network check for one
+telemetry stream, full suite/typecheck/lint/build. Merge, deploy, and verify
+live Twin Reactor Tokens/s updates.
+
+**Dependencies:** Task 4.
+
+## Task 6: Shared Monitor Publisher and Top-Card Migration
+
+**Description:** Move dashboard monitor ownership to the server runtime at its
+two-second cadence. Preserve the existing unscoped top-card source as the
+`overview-monitor` topic and remove its duplicate browser monitor process.
+
+**Acceptance criteria:**
+
+- [ ] Top `Cluster overview` retains its current label and source scope.
+- [ ] Dashboard monitor work is shared across browser tabs and no duplicate
+  aggregate monitor stream remains.
+- [ ] Hardware updates affect only relevant overview/reactor widgets.
+
+**Likely files:**
+
+- `lib/dashboardTelemetryRuntime.ts` and test
+- `app/components/dashboard/AggregateStats.tsx`
+- dashboard store/provider files
+- monitor compatibility adapter test
+
+**Verification:** Source fan-out/cadence tests, aggregate source-scope test,
+browser stream count, full suite/typecheck/lint/build, merged deployment.
+
+**Dependencies:** Task 5.
+
+## Task 7: Shared Status and Service Publisher; Workload Ownership
+
+**Description:** Move status and service-health collection into the server
+runtime and split dashboard workload/error ownership away from `DashboardLive`
+parent state.
+
+**Acceptance criteria:**
+
+- [ ] Status runs at three seconds and service health at ten seconds on the
+  server, not once per mounted card.
+- [ ] `DashboardLive` is structural and no longer updates a status map on each
+  event.
+- [ ] Workload, error, and service sections update only on their relevant topic.
+
+**Likely files:**
+
+- `lib/dashboardTelemetryRuntime.ts` and test
+- `lib/rpc/procedures/{status,services}.ts`
 - `app/components/dashboard/DashboardLive.tsx`
-- `app/components/dashboard/{AggregateStats,ReactorCard,ClusterOverviewCard}.tsx`
-- dashboard connection/render tests
+- workload/error section components and tests
 
-**Verification:** Store selector tests, one-client network contract test, React
-render-isolation tests, full suite/typecheck/lint/build, browser network and
-visual verification. Merge, deploy, then confirm one live stream and selective
-updates on Coxshire.
+**Verification:** Source-count, selector, cleanup, and layout tests; full
+suite/typecheck/lint/build; browser update isolation; merged deployment.
 
-**Dependencies:** Task 2.
+**Dependencies:** Task 6.
 
-## Task 4: Remove the Dashboard Server-Render Waterfall and Measure
+## Task 8: Remove the Dashboard Server-Render Waterfall and Measure
 
 **Description:** Use the shared server cache to seed the dashboard and defer
 noncritical workload decoration. This reduces navigation latency without
@@ -155,17 +250,20 @@ changing the visible cards or their meaning.
 **Verification:** Full suite/typecheck/lint/build; repeatable timing script;
 browser performance trace; merged deployment and live endpoint verification.
 
-**Dependencies:** Task 3.
+**Dependencies:** Task 7.
 
 ## Checkpoints and Releases
 
 1. **After Task 1:** release the one-second collector. Verify persisted data on
    Coxshire before proceeding.
-2. **After Task 2:** release the server SSE contract. Verify response headers,
+2. **After Task 2:** release the contract slice. Verify normal RPC responses
+   remain unchanged and SSE headers are present without consuming the body.
+3. **After Task 3:** release the live server SSE feed. Verify response headers,
    event cadence, reconnect, and source fan-out.
-3. **After Task 3:** release the dashboard conversion. Verify one browser SSE
-   connection and render isolation.
-4. **After Task 4:** compare performance with the recorded baseline. Retain only
+4. **After Task 5:** release the live Twin Reactor SSE conversion. Verify one
+   browser telemetry stream and C032/C458 render isolation.
+5. **After Task 7:** release the full dashboard collection consolidation.
+6. **After Task 8:** compare performance with the recorded baseline. Retain only
    changes that beat noise and meet the acceptance criteria.
 
 ## Risks and Mitigations
@@ -177,4 +275,4 @@ browser performance trace; merged deployment and live endpoint verification.
 | SSE proxy buffers messages | Explicit response headers and deployed first-event/heartbeat tests. |
 | A new runtime causes duplicate CLI work | Runtime-level fan-out tests with two clients and compatibility adapters. |
 | Faster data still rerenders too much UI | Topic-scoped external-store subscriptions and React commit isolation tests. |
-| Faster transport leaves slow navigation | Address Server Component waterfall separately in Task 4 and measure it. |
+| Faster transport leaves slow navigation | Address Server Component waterfall separately in Task 8 and measure it. |
