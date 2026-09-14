@@ -1,15 +1,37 @@
-export type TrendRange = "15m" | "1d" | "7d" | "30d";
+import { z } from "zod";
 
-export type TokenObservation = {
-  atMs: number;
-  cluster: string;
-  fingerprint: string;
-  tokensPerSecond: number | null;
-  /** Number of equally-timed valid samples represented by this observation. */
-  weight?: number;
-  /** Latest source timestamp when this observation is a compacted bucket. */
-  latestAtMs?: number;
-};
+export type TrendRange = "5m" | "15m" | "1d" | "7d" | "30d";
+
+export const TREND_RANGES = [
+  "5m",
+  "15m",
+  "1d",
+  "7d",
+  "30d",
+] as const satisfies readonly TrendRange[];
+
+export function isTrendRange(range: unknown): range is TrendRange {
+  return typeof range === "string" && TREND_RANGES.includes(range as TrendRange);
+}
+
+export const TokenObservationSchema = z
+  .object({
+    atMs: z.number().int().nonnegative(),
+    cluster: z.string().min(1),
+    fingerprint: z.string().min(1),
+    tokensPerSecond: z.number().nonnegative().nullable(),
+    /** Number of equally-timed valid samples represented by this observation. */
+    weight: z.number().positive().optional(),
+    /** Latest source timestamp when this observation is a compacted bucket. */
+    latestAtMs: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    (observation) =>
+      observation.latestAtMs === undefined || observation.latestAtMs >= observation.atMs,
+    { message: "latestAtMs must not precede atMs", path: ["latestAtMs"] },
+  );
+export type TokenObservation = z.infer<typeof TokenObservationSchema>;
 
 export type TokenHistoryPoint = {
   atMs: number;
@@ -21,6 +43,7 @@ export type TokenHistoryState = "ready" | "partial" | "empty" | "unavailable";
 export type TokenHistoryResult = {
   cluster: string;
   fingerprint: string | null;
+  latestObservationAtMs: number | null;
   range: TrendRange;
   fromMs: number;
   toMs: number;
@@ -48,6 +71,7 @@ export type TokenHistoryRangePolicy = {
 };
 
 export function rangePolicy(range: TrendRange): TokenHistoryRangePolicy {
+  if (range === "5m") return { durationMs: 5 * 60_000, bucketMs: 1_000 };
   if (range === "15m") return { durationMs: 15 * 60_000, bucketMs: 5_000 };
   if (range === "1d") return { durationMs: 24 * 60 * 60_000, bucketMs: 5 * 60_000 };
   if (range === "7d") return { durationMs: 7 * 24 * 60 * 60_000, bucketMs: 30 * 60_000 };
@@ -112,6 +136,7 @@ export function aggregateTokenHistory(
 
   const cluster = options.cluster ?? newest?.observation.cluster ?? "";
   const fingerprint = newest?.observation.fingerprint ?? null;
+  const latestObservationAtMs = newest ? seriesTimestamp(newest.observation) : null;
   const buckets: Bucket[] = Array.from({ length: pointCount }, () => ({
     weightedSum: 0,
     validWeight: 0,
@@ -157,6 +182,7 @@ export function aggregateTokenHistory(
   return {
     cluster,
     fingerprint,
+    latestObservationAtMs,
     range: options.range,
     fromMs,
     toMs,

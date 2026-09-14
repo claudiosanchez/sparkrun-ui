@@ -2,6 +2,10 @@ import { z } from "zod";
 import { MonitorTickSchema } from "./monitor";
 import { ClusterStatusSchema } from "./schemas";
 import { ServiceHealthSchema } from "./rpc/procedures/services";
+import {
+  TokenHistoryTelemetryEventSchema,
+  TokenHistoryTelemetryPublishEventSchema,
+} from "./tokenHistoryTelemetry";
 import { VllmClusterSnapshotSchema } from "./vllmMetrics";
 
 const EventEnvelopeSchema = z.object({
@@ -45,6 +49,7 @@ export const DashboardTelemetryEventSchema = z.discriminatedUnion("topic", [
   OverviewMonitorEventSchema,
   StatusEventSchema,
   ServiceEventSchema,
+  TokenHistoryTelemetryEventSchema,
 ]);
 export type DashboardTelemetryEvent = z.infer<typeof DashboardTelemetryEventSchema>;
 
@@ -54,6 +59,7 @@ const DashboardTelemetryPublishEventSchema = z.discriminatedUnion("topic", [
   OverviewMonitorEventSchema.omit({ version: true, revision: true }),
   StatusEventSchema.omit({ version: true, revision: true }),
   ServiceEventSchema.omit({ version: true, revision: true }),
+  TokenHistoryTelemetryPublishEventSchema,
 ]);
 export type DashboardTelemetryPublishEvent = z.input<typeof DashboardTelemetryPublishEventSchema>;
 

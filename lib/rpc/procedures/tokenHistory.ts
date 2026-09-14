@@ -1,9 +1,14 @@
 import { ORPCError, os } from "@orpc/server";
 import { z } from "zod";
-import { rangePolicy, type TokenHistoryResult, type TrendRange } from "@/lib/tokenHistory";
+import {
+  rangePolicy,
+  TREND_RANGES,
+  type TokenHistoryResult,
+  type TrendRange,
+} from "@/lib/tokenHistory";
 import { getProductionVllmCollectorRuntime } from "@/lib/vllmCollectorRuntime";
 
-const TrendRangeSchema = z.enum(["15m", "1d", "7d", "30d"]);
+const TrendRangeSchema = z.enum(TREND_RANGES);
 const TokenHistoryPointSchema = z.object({
   atMs: z.number().int().finite(),
   tokensPerSecond: z.number().finite().nonnegative().nullable(),
@@ -12,6 +17,7 @@ const TokenHistoryPointSchema = z.object({
 export const TokenHistoryResultSchema = z.object({
   cluster: z.string(),
   fingerprint: z.string().nullable(),
+  latestObservationAtMs: z.number().int().nonnegative().nullable(),
   range: TrendRangeSchema,
   fromMs: z.number().finite(),
   toMs: z.number().finite(),
@@ -34,6 +40,7 @@ function unavailableResult(cluster: string, range: TrendRange, nowMs: number): T
   return {
     cluster,
     fingerprint: null,
+    latestObservationAtMs: null,
     range,
     fromMs,
     toMs: nowMs,

@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import type { ClusterEntry } from "./schemas";
 import type { VllmCollectorRegistry } from "./vllmCollector";
 import type { VllmClusterSnapshot } from "./vllmMetrics";
-import type { TokenHistoryStore } from "./tokenHistory";
+import type { TokenHistoryStore, TokenObservation } from "./tokenHistory";
+import { getProductionDashboardTelemetryBroker } from "./dashboardTelemetry";
 import { getProductionVllmCollectorRuntime } from "./vllmCollectorRuntime";
 
 export const RECORDER_POLL_INTERVAL_MS = 1_000;
@@ -20,6 +21,7 @@ export type TokenHistoryRecorderDependencies = {
   now: () => number;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
   discoveryIntervalMs?: number;
+  publishObservation?: (observation: TokenObservation) => void | Promise<void>;
 };
 
 type RecorderSubscription = {
@@ -105,6 +107,15 @@ export function createTokenHistoryRecorder(dependencies: TokenHistoryRecorderDep
     void write.finally(() => pendingWrites.delete(write)).catch(() => undefined);
   }
 
+  function publishObservation(observation: TokenObservation): void {
+    try {
+      const publication = dependencies.publishObservation?.(observation);
+      void Promise.resolve(publication).catch(() => undefined);
+    } catch {
+      // Live publication is best effort and must not interrupt recording.
+    }
+  }
+
   function subscribeCluster(
     cluster: ClusterEntry,
     hosts: string[],
@@ -148,12 +159,14 @@ export function createTokenHistoryRecorder(dependencies: TokenHistoryRecorderDep
         snapshot.metrics.tokensPerSecond.value >= 0
           ? snapshot.metrics.tokensPerSecond.value
           : null;
-      trackWrite({
+      const observation: TokenObservation = {
         atMs,
         cluster: cluster.name,
         fingerprint,
         tokensPerSecond,
-      });
+      };
+      publishObservation(observation);
+      trackWrite(observation);
     };
     const onStopped = () => {
       // Collector stop callbacks run before the entry is removed. Mark the
@@ -296,6 +309,14 @@ export function startTokenHistoryRecorder(): () => void {
       registry: runtime.registry,
       store: runtime.store,
       now: runtime.dependencies.wallNow,
+      publishObservation: (observation) => {
+        getProductionDashboardTelemetryBroker().publish({
+          topic: "token-history",
+          cluster: observation.cluster,
+          observedAtMs: observation.atMs,
+          payload: observation,
+        });
+      },
     });
     void recorder.start().catch(() => undefined);
   } catch {

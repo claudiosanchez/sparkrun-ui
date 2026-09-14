@@ -5,6 +5,7 @@ const successfulResponse = {
   json: {
     cluster: "c032",
     fingerprint: "fingerprint",
+    latestObservationAtMs: 11_000,
     range: "15m",
     fromMs: 1_000,
     toMs: 11_000,

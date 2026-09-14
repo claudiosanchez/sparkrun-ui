@@ -17,6 +17,7 @@ describe("telemetry.stream", () => {
     { host: "c032.local" },
     { url: "http://c032.local:8000/metrics" },
     { intervalMs: 1_000 },
+    { cluster: "c032" },
   ])("rejects client-owned source configuration: %o", async (input) => {
     await expect(client.stream(input as never)).rejects.toThrow();
     expect(getProductionDashboardTelemetryBroker().activeSubscriptionCount).toBe(0);
@@ -26,9 +27,15 @@ describe("telemetry.stream", () => {
     const broker = getProductionDashboardTelemetryBroker();
     const iterator = await client.stream({});
     const event = broker.publish({
-      topic: "overview-monitor",
+      topic: "token-history",
+      cluster: "c032",
       observedAtMs: 20_000,
-      payload: { timestamp: 20_000, hosts: [] },
+      payload: {
+        atMs: 20_000,
+        cluster: "c032",
+        fingerprint: "fingerprint-c032",
+        tokensPerSecond: 12,
+      },
     });
 
     await expect(iterator.next()).resolves.toEqual({ value: event, done: false });

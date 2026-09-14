@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { TokenHistoryResult, TrendRange } from "@/lib/tokenHistory";
@@ -14,7 +14,10 @@ type QueryFixture = {
   retry: () => void;
 };
 
-const mockState = vi.hoisted(() => ({ current: null as QueryFixture | null }));
+const mockState = vi.hoisted(() => ({
+  current: null as QueryFixture | null,
+  liveResult: null as TokenHistoryResult | null,
+}));
 
 vi.mock("@/app/components/dashboard/tokenHistoryData", () => ({
   summarizeTokenHistory: () => ({
@@ -29,16 +32,32 @@ vi.mock("@/app/components/dashboard/TokenHistoryChart", () => ({
   TokenHistoryChart: ({ ariaLabel }: { ariaLabel: string }) =>
     createElement("div", { role: "img", "aria-label": ariaLabel }),
 }));
+vi.mock("@/app/components/dashboard/LiveTokenHistoryContent", () => ({
+  LiveTokenHistoryContent: ({
+    result,
+    children,
+  }: {
+    result: TokenHistoryResult;
+    children: (result: TokenHistoryResult) => ReactNode;
+  }) =>
+    createElement(
+      "div",
+      { "data-live-range": result.range },
+      children(mockState.liveResult ?? result),
+    ),
+}));
 vi.mock("@/app/components/dashboard/useTokenHistory", () => ({
   useTokenHistory: () => mockState.current,
 }));
 
 import { ClusterTokenHistoryCard } from "@/app/components/dashboard/ClusterTokenHistoryCard";
+import { applyLiveTokenHistory } from "@/app/components/dashboard/liveTokenHistory";
 
 const cluster = { name: "alpha", hosts: ["10.0.0.1"], is_default: true };
 const result: TokenHistoryResult = {
   cluster: "alpha",
   fingerprint: "fingerprint",
+  latestObservationAtMs: 11_000,
   range: "15m",
   fromMs: 1_000,
   toMs: 11_000,
@@ -52,9 +71,9 @@ const result: TokenHistoryResult = {
   ],
 };
 
-function renderCard(query: QueryFixture): string {
+function renderCard(query: QueryFixture, range: TrendRange = "15m"): string {
   mockState.current = query;
-  return renderToStaticMarkup(createElement(ClusterTokenHistoryCard, { cluster, range: "15m" }));
+  return renderToStaticMarkup(createElement(ClusterTokenHistoryCard, { cluster, range }));
 }
 
 function baseQuery(overrides: Partial<QueryFixture> = {}): QueryFixture {
@@ -73,6 +92,7 @@ function baseQuery(overrides: Partial<QueryFixture> = {}): QueryFixture {
 
 beforeEach(() => {
   mockState.current = null;
+  mockState.liveResult = null;
 });
 
 it("renders the card heading, zero summary, and accessible chart", () => {
@@ -105,6 +125,85 @@ it("renders history content after a successful client response", () => {
   expect(html).not.toContain("Loading persisted token history");
   expect(html).toContain("Latest: 0.0 Tokens/s");
   expect(html).toContain('role="img"');
+});
+
+it("mounts the live subscriber only for a usable displayed five-minute result", () => {
+  const fiveMinuteResult = { ...result, range: "5m" as const, resolutionMs: 1_000 };
+
+  const fiveMinuteHtml = renderCard(
+    baseQuery({
+      requestedRange: "5m",
+      displayedRange: "5m",
+      result: fiveMinuteResult,
+    }),
+    "5m",
+  );
+  const retainedLongRangeHtml = renderCard(
+    baseQuery({
+      requestedRange: "5m",
+      displayedRange: "15m",
+      result,
+      isRefreshing: true,
+    }),
+    "5m",
+  );
+
+  expect(fiveMinuteHtml).toContain('data-live-range="5m"');
+  expect(retainedLongRangeHtml).not.toContain("data-live-range");
+  expect(retainedLongRangeHtml).toContain('role="img"');
+});
+
+it("updates a five-minute badge from collecting to partial after a numeric live event", () => {
+  const emptyBase: TokenHistoryResult = {
+    ...result,
+    range: "5m",
+    resolutionMs: 1_000,
+    state: "empty",
+    coverage: 0,
+    points: result.points.map((point) => ({ ...point, tokensPerSecond: null })),
+  };
+  mockState.liveResult = applyLiveTokenHistory(emptyBase, [
+    {
+      atMs: 12_000,
+      cluster: "alpha",
+      fingerprint: "fingerprint",
+      tokensPerSecond: 0,
+    },
+  ]);
+
+  const html = renderCard(
+    baseQuery({ requestedRange: "5m", displayedRange: "5m", result: emptyBase }),
+    "5m",
+  );
+
+  expect(html).toContain("Partial history");
+  expect(html).not.toContain("Collecting history");
+});
+
+it("updates a ready five-minute badge to collecting after a fingerprint-changing gap", () => {
+  const readyBase: TokenHistoryResult = {
+    ...result,
+    range: "5m",
+    resolutionMs: 1_000,
+  };
+  mockState.liveResult = applyLiveTokenHistory(readyBase, [
+    {
+      atMs: 12_000,
+      cluster: "alpha",
+      fingerprint: "replacement-fingerprint",
+      tokensPerSecond: null,
+    },
+  ]);
+
+  const liveHtml = renderCard(
+    baseQuery({ requestedRange: "5m", displayedRange: "5m", result: readyBase }),
+    "5m",
+  );
+  const longRangeHtml = renderCard(baseQuery({ result }), "15m");
+
+  expect(liveHtml).toContain("Collecting history");
+  expect(liveHtml).not.toContain(">Ready<");
+  expect(longRangeHtml).toContain(">Ready<");
 });
 
 it("renders an honest collecting message without a chart for empty history", () => {

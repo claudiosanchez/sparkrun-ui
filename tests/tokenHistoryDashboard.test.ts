@@ -18,6 +18,7 @@ import {
 const result: TokenHistoryResult = {
   cluster: "alpha",
   fingerprint: "abc",
+  latestObservationAtMs: 10_000,
   range: "15m",
   fromMs: 0,
   toMs: 15_000,
@@ -32,8 +33,8 @@ const result: TokenHistoryResult = {
 };
 
 describe("token history dashboard data", () => {
-  it("supports exactly the four bounded history ranges", () => {
-    expect(TOKEN_HISTORY_RANGES).toEqual(["15m", "1d", "7d", "30d"]);
+  it("supports exactly the five bounded history ranges", () => {
+    expect(TOKEN_HISTORY_RANGES).toEqual(["5m", "15m", "1d", "7d", "30d"]);
   });
 
   it("keys cache entries by cluster and range", () => {
@@ -99,6 +100,44 @@ describe("token history dashboard data", () => {
     expect(source).toContain("rpc.tokenHistory.get");
     expect(source).not.toContain("tokenHistory.stream");
     expect(source).not.toMatch(/https?:\/\/[^"'`]*cluster/);
+  });
+
+  it("owns one reconnecting telemetry stream in the history provider outside the card map", () => {
+    const providerSource = readFileSync(
+      new URL("../app/components/dashboard/TokenHistoryTelemetryProvider.tsx", import.meta.url),
+      "utf8",
+    );
+    const sectionSource = readFileSync(
+      new URL("../app/components/dashboard/ClusterTokenHistorySection.tsx", import.meta.url),
+      "utf8",
+    );
+    const cardSource = readFileSync(
+      new URL("../app/components/dashboard/ClusterTokenHistoryCard.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(providerSource.match(/rpc\.telemetry\.stream\(/g)).toHaveLength(1);
+    expect(providerSource).toContain("new AbortController()");
+    expect(providerSource).toContain("waitForRetry");
+    expect(providerSource).toContain("setConnectionHealthy(false)");
+    expect(providerSource).not.toContain("EventSource");
+    expect(providerSource).not.toContain("tokenHistory.stream");
+    expect(providerSource).not.toMatch(/https?:\/\/[^"'`]*cluster/);
+    expect(cardSource).not.toContain("telemetry.stream");
+    expect(sectionSource.match(/<TokenHistoryTelemetryProvider>/g)).toHaveLength(1);
+    expect(sectionSource.indexOf("<TokenHistoryTelemetryProvider>")).toBeLessThan(
+      sectionSource.indexOf("clusters.map"),
+    );
+  });
+
+  it("keeps the client telemetry store on the portable token-history schema boundary", () => {
+    const storeSource = readFileSync(
+      new URL("../app/components/dashboard/tokenHistoryTelemetryStore.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(storeSource).toContain("@/lib/tokenHistoryTelemetry");
+    expect(storeSource).not.toContain("@/lib/dashboardTelemetry");
   });
 
   it("keeps a shared request alive until its final card releases it", async () => {

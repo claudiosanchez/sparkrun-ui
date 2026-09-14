@@ -4,9 +4,11 @@ import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent } fr
 import type { ClusterEntry } from "@/lib/schemas";
 import type { TrendRange } from "@/lib/tokenHistory";
 import { ClusterTokenHistoryCard } from "./ClusterTokenHistoryCard";
+import { TokenHistoryTelemetryProvider } from "./TokenHistoryTelemetryProvider";
 import { TOKEN_HISTORY_RANGES } from "./tokenHistoryData";
 
 const rangeTabIds: Record<TrendRange, string> = {
+  "5m": "token-history-tab-5m",
   "15m": "token-history-tab-15m",
   "1d": "token-history-tab-1d",
   "7d": "token-history-tab-7d",
@@ -18,8 +20,9 @@ export const ClusterTokenHistorySection = memo(function ClusterTokenHistorySecti
 }: {
   clusters: ClusterEntry[];
 }) {
-  const [range, setRange] = useState<TrendRange>("15m");
+  const [range, setRange] = useState<TrendRange>("5m");
   const tabRefs = useRef<Record<TrendRange, HTMLButtonElement | null>>({
+    "5m": null,
     "15m": null,
     "1d": null,
     "7d": null,
@@ -88,22 +91,24 @@ export const ClusterTokenHistorySection = memo(function ClusterTokenHistorySecti
           </button>
         ))}
       </div>
-      <div
-        id="token-history-cards"
-        role="tabpanel"
-        aria-labelledby={rangeTabIds[range]}
-        className="grid grid-cols-1 gap-4 lg:grid-cols-2"
-      >
-        {clusters.length === 0 ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            No saved clusters have token history yet.
-          </p>
-        ) : (
-          clusters.map((cluster) => (
-            <ClusterTokenHistoryCard key={cluster.name} cluster={cluster} range={range} />
-          ))
-        )}
-      </div>
+      <TokenHistoryTelemetryProvider>
+        <div
+          id="token-history-cards"
+          role="tabpanel"
+          aria-labelledby={rangeTabIds[range]}
+          className="grid grid-cols-1 gap-4 lg:grid-cols-2"
+        >
+          {clusters.length === 0 ? (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              No saved clusters have token history yet.
+            </p>
+          ) : (
+            clusters.map((cluster) => (
+              <ClusterTokenHistoryCard key={cluster.name} cluster={cluster} range={range} />
+            ))
+          )}
+        </div>
+      </TokenHistoryTelemetryProvider>
     </section>
   );
 });

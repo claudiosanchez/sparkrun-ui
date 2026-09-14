@@ -2,10 +2,11 @@
 
 import { memo } from "react";
 import type { ClusterEntry } from "@/lib/schemas";
-import type { TrendRange } from "@/lib/tokenHistory";
+import type { TokenHistoryResult, TrendRange } from "@/lib/tokenHistory";
 import { Badge } from "@/app/components/ui/Badge";
 import { Button } from "@/app/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/app/components/ui/Card";
+import { LiveTokenHistoryContent } from "./LiveTokenHistoryContent";
 import { summarizeTokenHistory } from "./tokenHistoryData";
 import { TokenHistoryChart } from "./TokenHistoryChart";
 import { useTokenHistory, type TokenHistoryQueryState } from "./useTokenHistory";
@@ -18,10 +19,48 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
   range: TrendRange;
 }) {
   const query = useTokenHistory(cluster.name, range);
-  const hasResult = query.result !== null;
-  const requestActive = query.isInitialLoading || query.isRefreshing;
   const displayedRange = query.displayedRange ?? query.result?.range ?? null;
-  const unavailable = !hasResult || query.result?.state === "unavailable";
+  const hasUsableResult = query.result !== null && query.result.state !== "unavailable";
+
+  if (hasUsableResult && displayedRange === "5m") {
+    return (
+      <LiveTokenHistoryContent clusterName={cluster.name} result={query.result!}>
+        {(liveResult) => (
+          <TokenHistoryCardView
+            clusterName={cluster.name}
+            query={query}
+            result={liveResult}
+            displayedRange={displayedRange}
+          />
+        )}
+      </LiveTokenHistoryContent>
+    );
+  }
+
+  return (
+    <TokenHistoryCardView
+      clusterName={cluster.name}
+      query={query}
+      result={query.result}
+      displayedRange={displayedRange}
+    />
+  );
+});
+
+function TokenHistoryCardView({
+  clusterName,
+  query,
+  result,
+  displayedRange,
+}: {
+  clusterName: string;
+  query: TokenHistoryQueryState;
+  result: TokenHistoryResult | null;
+  displayedRange: TrendRange | null;
+}) {
+  const hasResult = result !== null;
+  const requestActive = query.isInitialLoading || query.isRefreshing;
+  const unavailable = !hasResult || result.state === "unavailable";
   const requestFailed = query.error !== null;
   const hasUsableResult = hasResult && !unavailable;
   const retainedFailure = hasUsableResult && requestFailed;
@@ -32,11 +71,11 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
     badge = { label: "Loading history", tone: "neutral" };
   } else if (unavailable) {
     badge = { label: "History unavailable", tone: "red" };
-  } else if (query.result?.state === "empty") {
+  } else if (result?.state === "empty") {
     badge = { label: "Collecting history", tone: "neutral" };
   } else if (staleResult) {
     badge = { label: "Stale", tone: "amber" };
-  } else if (query.result?.state === "partial") {
+  } else if (result?.state === "partial") {
     badge = { label: "Partial history", tone: "amber" };
   } else {
     badge = { label: "Ready", tone: "green" };
@@ -45,18 +84,19 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
   return (
     <Card className="min-w-0">
       <CardHeader className="flex-row items-center justify-between gap-3">
-        <CardTitle className="truncate">{cluster.name}</CardTitle>
+        <CardTitle className="truncate">{clusterName}</CardTitle>
         <Badge tone={badge.tone}>{badge.label}</Badge>
       </CardHeader>
       <CardBody>
         {hasResult && !unavailable ? (
           <HistoryContent
-            clusterName={cluster.name}
+            clusterName={clusterName}
             query={query}
+            result={result}
             requestActive={requestActive}
             displayedRange={displayedRange}
           />
-        ) : hasResult && query.result?.state === "unavailable" ? (
+        ) : hasResult && result.state === "unavailable" ? (
           <UnavailableContent query={query} requestActive={requestActive} hasCachedResult />
         ) : query.isInitialLoading ? (
           <div
@@ -71,22 +111,21 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
       </CardBody>
     </Card>
   );
-});
+}
 
 function HistoryContent({
   clusterName,
   query,
+  result,
   requestActive,
   displayedRange,
 }: {
   clusterName: string;
   query: TokenHistoryQueryState;
+  result: TokenHistoryResult;
   requestActive: boolean;
   displayedRange: TrendRange | null;
 }) {
-  const result = query.result;
-  if (result === null) return null;
-
   if (result.state === "empty") {
     return (
       <div className="flex h-56 flex-col items-center justify-center gap-2 rounded-md bg-zinc-50 px-4 text-center text-sm text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400">

@@ -1,6 +1,6 @@
-import type { TokenHistoryResult, TrendRange } from "@/lib/tokenHistory";
+import { TREND_RANGES, type TokenHistoryResult, type TrendRange } from "@/lib/tokenHistory";
 
-export const TOKEN_HISTORY_RANGES = ["15m", "1d", "7d", "30d"] as const;
+export const TOKEN_HISTORY_RANGES = TREND_RANGES;
 export const TOKEN_HISTORY_REFRESH_MS = 60_000;
 
 export type TokenHistorySummary = {

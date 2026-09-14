@@ -69,13 +69,19 @@ describe("dashboard telemetry RPC route", () => {
 
     const reader = response.body!.getReader();
     broker.publish({
-      topic: "overview-monitor",
+      topic: "token-history",
+      cluster: "c032",
       observedAtMs: 30_000,
-      payload: { timestamp: 30_000, hosts: [] },
+      payload: {
+        atMs: 30_000,
+        cluster: "c032",
+        fingerprint: "fingerprint-c032",
+        tokensPerSecond: 12,
+      },
     });
     const decoder = new TextDecoder();
     let received = "";
-    while (!received.includes('"topic":"overview-monitor"')) {
+    while (!received.includes('"topic":"token-history"')) {
       const chunk = await readChunk(reader);
       expect(chunk.done).toBe(false);
       received += decoder.decode(chunk.value, { stream: true });
