@@ -11,6 +11,7 @@ import { WorkloadCard } from "./WorkloadCard";
 import { TwinReactorFleet } from "./TwinReactorFleet";
 import { AggregateStats } from "./AggregateStats";
 import { ClusterOverviewSection } from "./ClusterOverviewSection";
+import { ClusterTokenHistorySection } from "./ClusterTokenHistorySection";
 import { ReactorStateProvider } from "./ReactorStateContext";
 
 function formatHostError(value: unknown): string {
@@ -71,6 +72,8 @@ export function DashboardLive({
         <ClusterOverviewSection clusters={clusters} />
 
         <TwinReactorFleet clusters={clusters} />
+
+        <ClusterTokenHistorySection clusters={clusters} />
 
         {errors.length > 0 && (
           <Card className="border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40">
