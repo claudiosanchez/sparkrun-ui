@@ -39,7 +39,13 @@ function defaultPolicyPath(
   if (configured) return configured;
 
   if (hostPlatform === "darwin") {
-    return join(homeDirectory, "Library", "Application Support", "sparkrun-ui", "reactor-capacity.json");
+    return join(
+      homeDirectory,
+      "Library",
+      "Application Support",
+      "sparkrun-ui",
+      "reactor-capacity.json",
+    );
   }
   if (hostPlatform === "win32") {
     return join(
@@ -57,7 +63,12 @@ export async function loadReactorCapacityPolicies(
 ): Promise<Record<string, ReactorCapacityPolicy>> {
   const environment = options.environment ?? process.env;
   const policyPath =
-    options.path ?? defaultPolicyPath(environment, options.hostPlatform ?? platform(), options.homeDirectory ?? homedir());
+    options.path ??
+    defaultPolicyPath(
+      environment,
+      options.hostPlatform ?? platform(),
+      options.homeDirectory ?? homedir(),
+    );
   const readFile = options.readFile ?? ((path, encoding) => readNativeFile(path, encoding));
   const warn = options.warn ?? console.warn;
 
@@ -65,7 +76,9 @@ export async function loadReactorCapacityPolicies(
   try {
     parsed = policyFileSchema.parse(JSON.parse(await readFile(policyPath, "utf8")));
   } catch {
-    warn(`Reactor capacity policy is unavailable or invalid at ${policyPath}; targets are not set.`);
+    warn(
+      `Reactor capacity policy is unavailable or invalid at ${policyPath}; targets are not set.`,
+    );
     return {};
   }
 

@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  applyReactorCapacityPolicies,
-  loadReactorCapacityPolicies,
-} from "./reactorCapacityPolicy";
+import { applyReactorCapacityPolicies, loadReactorCapacityPolicies } from "./reactorCapacityPolicy";
 
 describe("reactor capacity policy", () => {
   it("loads a named policy and enriches only that saved cluster", async () => {
