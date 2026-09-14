@@ -69,7 +69,10 @@ describe("reactor capacity policy", () => {
       prototypeNames.map((name) => expect.objectContaining({ name, reactorCapacity: undefined })),
     );
 
-    const policies = Object.create(null) as Record<string, { safeConcurrentRequests: number; queueBudget: number }>;
+    const policies = Object.create(null) as Record<
+      string,
+      { safeConcurrentRequests: number; queueBudget: number }
+    >;
     policies.__proto__ = { safeConcurrentRequests: 4, queueBudget: 16 };
     expect(applyReactorCapacityPolicies([clusters[2]], policies)).toEqual([
       expect.objectContaining({
