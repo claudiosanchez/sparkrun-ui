@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TokenHistoryStore, TokenObservation } from "./tokenHistory";
-import { createTokenHistoryRecorder, fingerprintHosts } from "./tokenHistoryRecorder";
+import {
+  createTokenHistoryRecorder,
+  fingerprintHosts,
+  reconcileProductionTokenHistoryRecorder,
+} from "./tokenHistoryRecorder";
 import type { VllmClusterSnapshot } from "./vllmMetrics";
 
 type Listener = (snapshot: VllmClusterSnapshot) => void;
@@ -93,6 +97,19 @@ afterEach(() => {
 });
 
 describe("createTokenHistoryRecorder", () => {
+  it("does not confirm a topology reset for a legacy recorder without a reconcile hook", async () => {
+    const previousStop = globalThis.__sparkrunTokenHistoryStop;
+    const previousReconcile = globalThis.__sparkrunTokenHistoryReconcile;
+    globalThis.__sparkrunTokenHistoryStop = () => {};
+    globalThis.__sparkrunTokenHistoryReconcile = undefined;
+    try {
+      expect(await reconcileProductionTokenHistoryRecorder([])).toBe(false);
+    } finally {
+      globalThis.__sparkrunTokenHistoryStop = previousStop;
+      globalThis.__sparkrunTokenHistoryReconcile = previousReconcile;
+    }
+  });
+
   it("requests one-second collection without a browser subscriber", async () => {
     const registry = createFakeRegistry();
     const { store } = storeSpy();
@@ -266,7 +283,7 @@ describe("createTokenHistoryRecorder", () => {
     await recorder.start();
     const subscription = registry.subscriptions.get("c032");
     expect(subscription?.hosts).toBe("host-a");
-    await recorder.reconcile();
+    expect(await recorder.reconcile()).toBe(false);
     expect(registry.subscriptions.get("c032")).toBe(subscription);
     await recorder.stop();
   });
@@ -329,6 +346,64 @@ describe("createTokenHistoryRecorder", () => {
       { atMs: 100_000, tokensPerSecond: 5 },
       { atMs: 105_000, tokensPerSecond: 9 },
     ]);
+  });
+
+  it("does not stop a runtime collector that replaced the recorder's old leader first", async () => {
+    let hosts = ["host-a"];
+    type Entry = {
+      leaderHost: string;
+      subscribers: Set<Listener>;
+      onStopped: Map<Listener, () => void>;
+    };
+    let entry: Entry | undefined;
+    const stop = vi.fn(() => {
+      entry = undefined;
+    });
+    const registry = {
+      subscribe: vi.fn(
+        (cluster: string, leaderHost: string, listener: Listener, onStopped = () => {}) => {
+          if (!entry || entry.leaderHost !== leaderHost) {
+            entry = { leaderHost, subscribers: new Set(), onStopped: new Map() };
+          }
+          const subscribedEntry = entry;
+          subscribedEntry.subscribers.add(listener);
+          subscribedEntry.onStopped.set(listener, onStopped);
+          return () => {
+            subscribedEntry.subscribers.delete(listener);
+            subscribedEntry.onStopped.delete(listener);
+          };
+        },
+      ),
+      getEntry: vi.fn(() => entry),
+      stop,
+    };
+    const { store } = storeSpy();
+    const recorder = createTokenHistoryRecorder({
+      clusters: async () => [{ name: "c032", hosts, is_default: true }],
+      registry: registry as never,
+      store,
+      now: () => 100_000,
+      wait: waitUntilStopped,
+    });
+
+    await recorder.start();
+    const oldEntry = entry!;
+    for (const stopped of oldEntry.onStopped.values()) stopped();
+    const runtimeListener = vi.fn();
+    entry = {
+      leaderHost: "host-b",
+      subscribers: new Set([runtimeListener]),
+      onStopped: new Map([[runtimeListener, () => {}]]),
+    };
+    hosts = ["host-b"];
+
+    await recorder.reconcile();
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(entry?.leaderHost).toBe("host-b");
+    expect(entry?.subscribers).toContain(runtimeListener);
+
+    await recorder.stop();
   });
 
   it("contains asynchronous store failures and continues collecting", async () => {

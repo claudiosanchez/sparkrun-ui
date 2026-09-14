@@ -1,11 +1,9 @@
 "use client";
-import { memo, useEffect, useState } from "react";
+import { memo } from "react";
 import { Cpu, MemoryStick, Server, Thermometer, Zap } from "lucide-react";
 import { Card, CardBody } from "@/app/components/ui/Card";
-import { rpc } from "@/lib/rpc/client";
 import { monitorHostViews, type MonitorTick } from "@/lib/monitor";
-
-const HISTORY = 40;
+import { useDashboardOverviewTelemetry } from "./DashboardTelemetryProvider";
 
 type Aggregate = {
   hostCount: number;
@@ -85,39 +83,9 @@ function aggregate(tick: MonitorTick | null): Aggregate {
 }
 
 export const AggregateStats = memo(function AggregateStats() {
-  const [tick, setTick] = useState<MonitorTick | null>(null);
-  const [hist, setHist] = useState<{ cpu: number[]; gpu: number[] }>({ cpu: [], gpu: [] });
-  const [connected, setConnected] = useState(false);
-
-  useEffect(() => {
-    const ac = new AbortController();
-    let cancelled = false;
-    (async () => {
-      try {
-        const iter = await rpc.monitor.stream({ intervalSec: 2 }, { signal: ac.signal });
-        setConnected(true);
-        for await (const next of iter) {
-          if (cancelled) break;
-          setTick(next);
-          const agg = aggregate(next);
-          setHist((prev) => ({
-            cpu: push(prev.cpu, agg.cpuAvg),
-            gpu: push(prev.gpu, agg.gpuAvg),
-          }));
-        }
-      } catch (err) {
-        if (!cancelled && !(err instanceof DOMException && err.name === "AbortError")) {
-          console.error("[monitor.stream]", err);
-        }
-      } finally {
-        if (!cancelled) setConnected(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      ac.abort();
-    };
-  }, []);
+  const overview = useDashboardOverviewTelemetry();
+  const { monitor: tick } = overview;
+  const hist = overview.trends;
 
   const agg = aggregate(tick);
   const memPct = agg.memTotalGb ? (agg.memUsedGb / agg.memTotalGb) * 100 : 0;
@@ -140,9 +108,11 @@ export const AggregateStats = memo(function AggregateStats() {
           <span
             className={
               "inline-flex h-2 w-2 rounded-full " +
-              (connected ? "animate-pulse bg-emerald-500" : "bg-zinc-300")
+              (overview.connectionHealthy && tick !== null
+                ? "animate-pulse bg-emerald-500"
+                : "bg-zinc-300")
             }
-            title={connected ? "live" : "reconnecting"}
+            title={overview.connectionHealthy && tick !== null ? "live" : "reconnecting"}
           />
         </div>
 
@@ -202,11 +172,6 @@ export const AggregateStats = memo(function AggregateStats() {
     </Card>
   );
 });
-
-function push(arr: number[], v: number): number[] {
-  const next = arr.concat(v);
-  return next.length > HISTORY ? next.slice(-HISTORY) : next;
-}
 
 const toneBg: Record<string, string> = {
   sky: "bg-sky-500 dark:bg-sky-400",

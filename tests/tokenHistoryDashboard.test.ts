@@ -11,6 +11,7 @@ import {
 } from "@/app/components/dashboard/tokenHistoryData";
 import {
   acquireTokenHistoryRequest,
+  isFreshTokenHistoryCacheEntry,
   isTokenHistoryCacheable,
   shouldRetainUsableHistory,
 } from "@/app/components/dashboard/useTokenHistory";
@@ -84,6 +85,13 @@ describe("token history dashboard data", () => {
     expect(isTokenHistoryCacheable(unavailable)).toBe(false);
   });
 
+  it("invalidates a fresh cached history result after a topology reset", () => {
+    const cached = { result, fetchedAtMs: 100_000, topologyGeneration: 3 };
+
+    expect(isFreshTokenHistoryCacheEntry(cached, 3, 100_001)).toBe(true);
+    expect(isFreshTokenHistoryCacheEntry(cached, 4, 100_001)).toBe(false);
+  });
+
   it("retains usable chart data when a background request is unavailable", () => {
     const unavailable: TokenHistoryResult = { ...result, state: "unavailable" };
 
@@ -102,9 +110,9 @@ describe("token history dashboard data", () => {
     expect(source).not.toMatch(/https?:\/\/[^"'`]*cluster/);
   });
 
-  it("owns one reconnecting telemetry stream in the history provider outside the card map", () => {
+  it("owns one reconnecting dashboard telemetry stream outside the history-card map", () => {
     const providerSource = readFileSync(
-      new URL("../app/components/dashboard/TokenHistoryTelemetryProvider.tsx", import.meta.url),
+      new URL("../app/components/dashboard/DashboardTelemetryProvider.tsx", import.meta.url),
       "utf8",
     );
     const sectionSource = readFileSync(
@@ -119,15 +127,14 @@ describe("token history dashboard data", () => {
     expect(providerSource.match(/rpc\.telemetry\.stream\(/g)).toHaveLength(1);
     expect(providerSource).toContain("new AbortController()");
     expect(providerSource).toContain("waitForRetry");
+    expect(providerSource).toContain("store.beginConnection()");
+    expect(providerSource).toContain("tokenHistoryTelemetryStore.beginConnection()");
     expect(providerSource).toContain("setConnectionHealthy(false)");
     expect(providerSource).not.toContain("EventSource");
     expect(providerSource).not.toContain("tokenHistory.stream");
     expect(providerSource).not.toMatch(/https?:\/\/[^"'`]*cluster/);
     expect(cardSource).not.toContain("telemetry.stream");
-    expect(sectionSource.match(/<TokenHistoryTelemetryProvider>/g)).toHaveLength(1);
-    expect(sectionSource.indexOf("<TokenHistoryTelemetryProvider>")).toBeLessThan(
-      sectionSource.indexOf("clusters.map"),
-    );
+    expect(sectionSource).not.toContain("TelemetryProvider");
   });
 
   it("keeps the client telemetry store on the portable token-history schema boundary", () => {

@@ -79,6 +79,10 @@ function validObservationTime(value: number): number | null {
   return value;
 }
 
+function copyTopologySnapshot(clusters: readonly ClusterEntry[]): ClusterEntry[] {
+  return clusters.map((cluster) => ({ ...cluster, hosts: [...cluster.hosts] }));
+}
+
 export function createTokenHistoryRecorder(dependencies: TokenHistoryRecorderDependencies) {
   const registry = dependencies.registry as RecorderRegistry;
   const wait = dependencies.wait ?? defaultWait;
@@ -89,11 +93,12 @@ export function createTokenHistoryRecorder(dependencies: TokenHistoryRecorderDep
   const controller = new AbortController();
   const subscriptions = new Map<string, RecorderSubscription>();
   const pendingWrites = new Set<Promise<void>>();
+  let runtimeTopology: ClusterEntry[] | null = null;
   let started = false;
-  let initialReconcile: Promise<void> | null = null;
+  let initialReconcile: Promise<boolean> | null = null;
   let loopPromise: Promise<void> | null = null;
   let stopPromise: Promise<void> | null = null;
-  let reconciliationQueue = Promise.resolve();
+  let reconciliationQueue: Promise<void> = Promise.resolve();
 
   function trackWrite(observation: Parameters<TokenHistoryStore["record"]>[0]): void {
     let result: Promise<void>;
@@ -184,26 +189,44 @@ export function createTokenHistoryRecorder(dependencies: TokenHistoryRecorderDep
   }
 
   function removeSubscription(subscription: RecorderSubscription, stopEntry = true): void {
-    if (stopEntry) registry.stop?.(subscription.cluster);
+    // The dashboard runtime may have already replaced this cluster's collector
+    // with a new leader. Never stop that replacement while cleaning up the
+    // recorder's old subscription.
+    if (
+      stopEntry &&
+      registry.getEntry?.(subscription.cluster)?.leaderHost === subscription.hosts[0]
+    ) {
+      registry.stop?.(subscription.cluster);
+    }
     subscription.unsubscribe();
     if (!stopEntry && registry.getEntry?.(subscription.cluster)?.subscribers.size === 0) {
       registry.stop?.(subscription.cluster);
     }
   }
 
-  async function performReconcile(): Promise<void> {
-    if (controller.signal.aborted) return;
+  async function performReconcile(topology?: readonly ClusterEntry[]): Promise<boolean> {
+    if (controller.signal.aborted) return false;
 
-    let loaded: ClusterEntry[];
-    try {
-      loaded = await readClusters(dependencies.clusters, controller.signal);
-      if (!Array.isArray(loaded)) throw new Error("Invalid saved cluster list");
-    } catch {
-      // A transient discovery failure must not turn a known list into an
-      // empty list. The next loop iteration retries discovery.
-      return;
+    let loaded: readonly ClusterEntry[];
+    if (topology !== undefined) {
+      // Once the dashboard runtime owns a topology transition, retain that
+      // exact snapshot for recorder-loop retries. Its independent discovery
+      // result could be older and otherwise reattach a removed source.
+      runtimeTopology = copyTopologySnapshot(topology);
+      loaded = runtimeTopology;
+    } else if (runtimeTopology !== null) {
+      loaded = runtimeTopology;
+    } else {
+      try {
+        loaded = await readClusters(dependencies.clusters, controller.signal);
+        if (!Array.isArray(loaded)) throw new Error("Invalid saved cluster list");
+      } catch {
+        // A transient discovery failure must not turn a known list into an
+        // empty list. The next loop iteration retries discovery.
+        return false;
+      }
     }
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted) return false;
 
     const desired = new Map<
       string,
@@ -215,9 +238,9 @@ export function createTokenHistoryRecorder(dependencies: TokenHistoryRecorderDep
         typeof cluster.name !== "string" ||
         cluster.name.length === 0 ||
         !Array.isArray(cluster.hosts) ||
-        cluster.hosts.some((host) => typeof host !== "string")
+        cluster.hosts.some((host: unknown) => typeof host !== "string")
       ) {
-        return;
+        return false;
       }
       const hosts = normalizeHosts(cluster.hosts);
       desired.set(cluster.name, { cluster, hosts, fingerprint: fingerprintHosts(hosts) });
@@ -248,16 +271,23 @@ export function createTokenHistoryRecorder(dependencies: TokenHistoryRecorderDep
       const next = subscribeCluster(target.cluster, target.hosts, target.fingerprint, current);
       if (next) subscriptions.set(name, next);
     }
+    return true;
   }
 
-  function reconcile(): Promise<void> {
-    const operation = reconciliationQueue.then(() => performReconcile());
-    reconciliationQueue = operation.catch(() => undefined);
-    return operation;
+  function reconcile(topology?: readonly ClusterEntry[]): Promise<boolean> {
+    // Capture the runtime's discovery result before waiting behind another
+    // reconciliation. A later caller must not mutate this topology transition.
+    const snapshot = topology === undefined ? undefined : copyTopologySnapshot(topology);
+    const operation = reconciliationQueue.then(() => performReconcile(snapshot));
+    reconciliationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation.catch(() => false);
   }
 
-  function start(): Promise<void> {
-    if (started) return initialReconcile ?? Promise.resolve();
+  function start(): Promise<boolean> {
+    if (started) return initialReconcile ?? Promise.resolve(true);
     started = true;
     initialReconcile = reconcile();
     loopPromise = (async () => {
@@ -295,6 +325,25 @@ export function createTokenHistoryRecorder(dependencies: TokenHistoryRecorderDep
 
 declare global {
   var __sparkrunTokenHistoryStop: (() => void) | undefined;
+  var __sparkrunTokenHistoryReconcile:
+    | ((topology?: readonly ClusterEntry[]) => Promise<boolean>)
+    | undefined;
+}
+
+/** Reconcile the process-owned recorder before a dashboard topology transition. */
+export async function reconcileProductionTokenHistoryRecorder(
+  topology?: readonly ClusterEntry[],
+): Promise<boolean> {
+  const reconcile = globalThis.__sparkrunTokenHistoryReconcile;
+  // A process that retains a recorder across hot reload but lacks its matching
+  // reconciliation hook cannot prove the old source is gone. Preserve the
+  // current runtime target instead of publishing a reset it could repopulate.
+  if (!reconcile) return globalThis.__sparkrunTokenHistoryStop === undefined;
+  try {
+    return await reconcile(topology);
+  } catch {
+    return false;
+  }
 }
 
 /** Start the one process-owned recorder, returning an idempotent stop hook. */
@@ -302,6 +351,8 @@ export function startTokenHistoryRecorder(): () => void {
   if (globalThis.__sparkrunTokenHistoryStop) return globalThis.__sparkrunTokenHistoryStop;
 
   let recorder: ReturnType<typeof createTokenHistoryRecorder> | null = null;
+  const reconcile = (topology?: readonly ClusterEntry[]) =>
+    recorder?.reconcile(topology) ?? Promise.resolve(true);
   try {
     const runtime = getProductionVllmCollectorRuntime();
     recorder = createTokenHistoryRecorder({
@@ -322,6 +373,7 @@ export function startTokenHistoryRecorder(): () => void {
   } catch {
     // Instrumentation must never prevent the UI server from starting.
   }
+  globalThis.__sparkrunTokenHistoryReconcile = reconcile;
 
   let stopped = false;
   const stop = () => {
@@ -329,6 +381,8 @@ export function startTokenHistoryRecorder(): () => void {
     stopped = true;
     if (globalThis.__sparkrunTokenHistoryStop === stop)
       globalThis.__sparkrunTokenHistoryStop = undefined;
+    if (globalThis.__sparkrunTokenHistoryReconcile === reconcile)
+      globalThis.__sparkrunTokenHistoryReconcile = undefined;
     void recorder?.stop().catch(() => undefined);
   };
   globalThis.__sparkrunTokenHistoryStop = stop;

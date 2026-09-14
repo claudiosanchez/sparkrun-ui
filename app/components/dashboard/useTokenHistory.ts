@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { rpc } from "@/lib/rpc/client";
 import type { TokenHistoryResult, TrendRange } from "@/lib/tokenHistory";
 import {
@@ -8,8 +8,15 @@ import {
   tokenHistoryCacheKey,
   TOKEN_HISTORY_REFRESH_MS,
 } from "./tokenHistoryData";
+import { tokenHistoryTelemetryStore } from "./tokenHistoryTelemetryStore";
 
-const historyCache = new Map<string, { result: TokenHistoryResult; fetchedAtMs: number }>();
+type TokenHistoryCacheEntry = {
+  result: TokenHistoryResult;
+  fetchedAtMs: number;
+  topologyGeneration: number;
+};
+
+const historyCache = new Map<string, TokenHistoryCacheEntry>();
 const inFlightHistory = new Map<string, Promise<TokenHistoryResult>>();
 const historyRequestOwners = new Map<
   string,
@@ -94,9 +101,24 @@ export function shouldRetainUsableHistory(
   return previous !== null && previous.state !== "unavailable" && next.state === "unavailable";
 }
 
-function initialState(cluster: string, range: TrendRange): Omit<TokenHistoryQueryState, "retry"> {
+export function isFreshTokenHistoryCacheEntry(
+  entry: TokenHistoryCacheEntry,
+  topologyGeneration: number,
+  nowMs: number,
+): boolean {
+  return (
+    entry.topologyGeneration === topologyGeneration && isFreshHistoryCache(entry.fetchedAtMs, nowMs)
+  );
+}
+
+function initialState(
+  cluster: string,
+  range: TrendRange,
+  topologyGeneration: number,
+): Omit<TokenHistoryQueryState, "retry"> {
   const cached = historyCache.get(tokenHistoryCacheKey(cluster, range));
-  const fresh = cached !== undefined && isFreshHistoryCache(cached.fetchedAtMs, Date.now());
+  const fresh =
+    cached !== undefined && isFreshTokenHistoryCacheEntry(cached, topologyGeneration, Date.now());
 
   return {
     requestedRange: range,
@@ -122,9 +144,23 @@ function isAbortError(error: unknown): boolean {
 }
 
 export function useTokenHistory(cluster: string, range: TrendRange): TokenHistoryQueryState {
-  const [state, setState] = useState(() => initialState(cluster, range));
+  const subscribeToTopology = useCallback(
+    (listener: () => void) => tokenHistoryTelemetryStore.subscribe(cluster, listener),
+    [cluster],
+  );
+  const getTopologyGeneration = useCallback(
+    () => tokenHistoryTelemetryStore.getTopologyGeneration(cluster),
+    [cluster],
+  );
+  const topologyGeneration = useSyncExternalStore(
+    subscribeToTopology,
+    getTopologyGeneration,
+    getTopologyGeneration,
+  );
+  const [state, setState] = useState(() => initialState(cluster, range, topologyGeneration));
   const [retryNonce, setRetryNonce] = useState(0);
   const retryKey = useRef<string | null>(null);
+  const previousTopology = useRef({ cluster, generation: topologyGeneration });
   const cacheKey = tokenHistoryCacheKey(cluster, range);
 
   useEffect(() => {
@@ -134,10 +170,16 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
     const cached = historyCache.get(cacheKey);
-    const forceRequest = retryKey.current === cacheKey;
+    const topologyChanged =
+      previousTopology.current.cluster === cluster &&
+      previousTopology.current.generation !== topologyGeneration;
+    previousTopology.current = { cluster, generation: topologyGeneration };
+    const forceRequest = retryKey.current === cacheKey || topologyChanged;
     if (forceRequest) retryKey.current = null;
     const fresh =
-      !forceRequest && cached !== undefined && isFreshHistoryCache(cached.fetchedAtMs, Date.now());
+      !forceRequest &&
+      cached !== undefined &&
+      isFreshTokenHistoryCacheEntry(cached, topologyGeneration, Date.now());
 
     if (cached !== undefined) {
       setState((previous) => ({
@@ -182,7 +224,11 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
         const next = await requestHandle.promise;
         if (signal.aborted) return;
         if (isTokenHistoryCacheable(next)) {
-          historyCache.set(cacheKey, { result: next, fetchedAtMs: Date.now() });
+          historyCache.set(cacheKey, {
+            result: next,
+            fetchedAtMs: Date.now(),
+            topologyGeneration,
+          });
         }
         setState((previous) => ({
           ...previous,
@@ -233,7 +279,7 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
       ac.abort();
       if (refreshTimer !== undefined) clearTimeout(refreshTimer);
     };
-  }, [cacheKey, cluster, range, retryNonce]);
+  }, [cacheKey, cluster, range, retryNonce, topologyGeneration]);
 
   const retry = useCallback(() => {
     if (!inFlightHistory.has(cacheKey)) {

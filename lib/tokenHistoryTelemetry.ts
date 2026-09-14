@@ -41,3 +41,35 @@ export const TokenHistoryTelemetryPublishEventSchema = TokenHistoryTelemetryEven
   version: true,
   revision: true,
 }).superRefine(validateTokenHistoryEnvelope);
+
+const TokenHistoryTelemetryResetEventBaseSchema = z
+  .object({
+    version: z.literal(1),
+    revision: z.number().int().nonnegative(),
+    observedAtMs: z.number().int().nonnegative(),
+    topic: z.literal("token-history-reset"),
+    cluster: z.string().min(1),
+    payload: z.object({ reason: z.literal("topology-change") }).strict(),
+  })
+  .strict();
+
+/**
+ * A topology transition invalidates only in-memory live observations. Durable
+ * history remains available from the token-history query.
+ */
+export const TokenHistoryTelemetryResetEventSchema = TokenHistoryTelemetryResetEventBaseSchema;
+export type TokenHistoryTelemetryResetEvent = z.infer<typeof TokenHistoryTelemetryResetEventSchema>;
+
+export const TokenHistoryTelemetryResetPublishEventSchema =
+  TokenHistoryTelemetryResetEventBaseSchema.omit({
+    version: true,
+    revision: true,
+  });
+
+export const TokenHistoryTelemetryStreamEventSchema = z.discriminatedUnion("topic", [
+  TokenHistoryTelemetryEventSchema,
+  TokenHistoryTelemetryResetEventSchema,
+]);
+export type TokenHistoryTelemetryStreamEvent = z.infer<
+  typeof TokenHistoryTelemetryStreamEventSchema
+>;

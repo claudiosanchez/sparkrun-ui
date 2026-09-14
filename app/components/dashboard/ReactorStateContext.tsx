@@ -13,7 +13,7 @@ import type { ReactNode } from "react";
 import { deriveReactorState, type ReactorState } from "@/lib/reactorState";
 import { createReactorStateStore, type ReactorStateStore } from "@/lib/reactorStateStore";
 import type { ClusterEntry, ClusterStatus } from "@/lib/schemas";
-import { useReactor, type ReactorStatusUpdate } from "./useReactor";
+import { useReactor } from "./useReactor";
 
 const stateContext = createContext<ReactorStateStore | null>(null);
 const emptySubscribe = () => () => {};
@@ -21,12 +21,10 @@ const emptySubscribe = () => () => {};
 export function ReactorStateProvider({
   clusters,
   initialStatuses,
-  onStatus,
   children,
 }: {
   clusters: ClusterEntry[];
   initialStatuses: Record<string, ClusterStatus | null>;
-  onStatus: ReactorStatusUpdate;
   children: ReactNode;
 }) {
   const [store] = useState(() =>
@@ -46,13 +44,7 @@ export function ReactorStateProvider({
   return (
     <stateContext.Provider value={store}>
       {clusters.map((cluster) => (
-        <ReactorStateSource
-          key={cluster.name}
-          cluster={cluster}
-          initial={initialStatuses[cluster.name] ?? null}
-          onStatus={onStatus}
-          store={store}
-        />
+        <ReactorStateSource key={cluster.name} cluster={cluster} store={store} />
       ))}
       {children}
     </stateContext.Provider>
@@ -61,16 +53,12 @@ export function ReactorStateProvider({
 
 function ReactorStateSource({
   cluster,
-  initial,
-  onStatus,
   store,
 }: {
   cluster: ClusterEntry;
-  initial: ClusterStatus | null;
-  onStatus: ReactorStatusUpdate;
   store: ReactorStateStore;
 }) {
-  const state = useReactor(cluster, initial, onStatus);
+  const state = useReactor(cluster);
 
   useEffect(() => {
     store.publish(cluster.name, state);
