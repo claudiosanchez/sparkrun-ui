@@ -41,7 +41,12 @@ export function TokenHistoryChart({
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={result.points} margin={{ top: 8, right: 16, bottom: 4, left: 8 }}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis type="number" dataKey="atMs" tickFormatter={formatTimestamp} />
+          <XAxis
+            type="number"
+            dataKey="atMs"
+            domain={[result.fromMs, result.toMs]}
+            tickFormatter={formatTimestamp}
+          />
           <YAxis tickFormatter={(value) => `${value} tok/s`} width={56} />
           <Tooltip labelFormatter={formatTimestamp} formatter={formatTokensPerSecond} />
           <Line
