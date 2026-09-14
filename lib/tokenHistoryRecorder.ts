@@ -5,7 +5,7 @@ import type { VllmClusterSnapshot } from "./vllmMetrics";
 import type { TokenHistoryStore } from "./tokenHistory";
 import { getProductionVllmCollectorRuntime } from "./vllmCollectorRuntime";
 
-export const RECORDER_POLL_INTERVAL_MS = 5_000;
+export const RECORDER_POLL_INTERVAL_MS = 1_000;
 export const DISCOVERY_INTERVAL_MS = 5_000;
 
 type ClusterSource =

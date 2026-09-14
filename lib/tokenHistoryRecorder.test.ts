@@ -6,7 +6,10 @@ import type { VllmClusterSnapshot } from "./vllmMetrics";
 type Listener = (snapshot: VllmClusterSnapshot) => void;
 
 type FakeRegistry = {
-  subscriptions: Map<string, { hosts: string; listener: Listener; onStopped: () => void }>;
+  subscriptions: Map<
+    string,
+    { hosts: string; listener: Listener; onStopped: () => void; pollIntervalMs?: number }
+  >;
   subscribe: (
     cluster: string,
     leaderHost: string,
@@ -21,12 +24,12 @@ type FakeRegistry = {
 function createFakeRegistry(): FakeRegistry {
   const subscriptions = new Map<
     string,
-    { hosts: string; listener: Listener; onStopped: () => void }
+    { hosts: string; listener: Listener; onStopped: () => void; pollIntervalMs?: number }
   >();
   return {
     subscriptions,
-    subscribe(cluster, leaderHost, listener, onStopped = () => {}) {
-      subscriptions.set(cluster, { hosts: leaderHost, listener, onStopped });
+    subscribe(cluster, leaderHost, listener, onStopped = () => {}, pollIntervalMs) {
+      subscriptions.set(cluster, { hosts: leaderHost, listener, onStopped, pollIntervalMs });
       return () => {
         const current = subscriptions.get(cluster);
         if (current?.listener === listener) subscriptions.delete(cluster);
@@ -90,6 +93,23 @@ afterEach(() => {
 });
 
 describe("createTokenHistoryRecorder", () => {
+  it("requests one-second collection without a browser subscriber", async () => {
+    const registry = createFakeRegistry();
+    const { store } = storeSpy();
+    const recorder = createTokenHistoryRecorder({
+      clusters: async () => [{ name: "c032", hosts: ["host-a"], is_default: true }],
+      registry: registry as never,
+      store,
+      now: () => 100_000,
+      wait: waitUntilStopped,
+    });
+
+    await recorder.start();
+
+    expect(registry.subscriptions.get("c032")?.pollIntervalMs).toBe(1_000);
+    await recorder.stop();
+  });
+
   it("records live zero and positive Tokens/s without a browser subscriber", async () => {
     const registry = createFakeRegistry();
     const { store, observations } = storeSpy();
