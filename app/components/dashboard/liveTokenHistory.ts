@@ -3,14 +3,23 @@ import { rangePolicy, type TokenHistoryResult, type TokenObservation } from "@/l
 const LIVE_RANGE = "5m";
 const LIVE_POINT_LIMIT = 300;
 
+function observationSourceAtMs(observation: TokenObservation): number {
+  return observation.latestAtMs ?? observation.atMs;
+}
+
 export function reduceLiveTokenObservations(
   previous: readonly TokenObservation[],
   observation: TokenObservation,
 ): readonly TokenObservation[] {
   const currentFingerprint = previous.at(-1)?.fingerprint;
   if (currentFingerprint !== undefined && currentFingerprint !== observation.fingerprint) {
-    const newestAtMs = previous.at(-1)?.atMs;
-    if (newestAtMs !== undefined && observation.atMs < newestAtMs) return previous;
+    const newestObservation = previous.at(-1);
+    if (
+      newestObservation !== undefined &&
+      observationSourceAtMs(observation) < observationSourceAtMs(newestObservation)
+    ) {
+      return previous;
+    }
     return [observation];
   }
 
@@ -18,10 +27,14 @@ export function reduceLiveTokenObservations(
   for (const item of previous) byTimestamp.set(item.atMs, item);
   byTimestamp.set(observation.atMs, observation);
 
-  const ordered = [...byTimestamp.values()].sort((left, right) => left.atMs - right.atMs);
-  const newestAtMs = ordered.at(-1)?.atMs ?? observation.atMs;
+  const ordered = [...byTimestamp.values()].sort(
+    (left, right) => observationSourceAtMs(left) - observationSourceAtMs(right),
+  );
+  const newestAtMs = observationSourceAtMs(ordered.at(-1) ?? observation);
   const fromExclusive = newestAtMs - rangePolicy(LIVE_RANGE).durationMs;
-  return ordered.filter((item) => item.atMs > fromExclusive).slice(-LIVE_POINT_LIMIT);
+  return ordered
+    .filter((item) => observationSourceAtMs(item) > fromExclusive)
+    .slice(-LIVE_POINT_LIMIT);
 }
 
 export function applyLiveTokenHistory(
@@ -39,18 +52,12 @@ export function applyLiveTokenHistory(
   if (newest === undefined) return result;
 
   const policy = rangePolicy(LIVE_RANGE);
-  let newestBaseValueAtMs: number | null = null;
-  for (const point of result.points) {
-    if (point.tokensPerSecond === null || !Number.isFinite(point.tokensPerSecond)) continue;
-    if (newestBaseValueAtMs === null || point.atMs > newestBaseValueAtMs) {
-      newestBaseValueAtMs = point.atMs;
-    }
-  }
+  const newestLiveSourceAtMs = observationSourceAtMs(newest);
   if (
     result.fingerprint !== null &&
     newest.fingerprint !== result.fingerprint &&
-    newestBaseValueAtMs !== null &&
-    newest.atMs < newestBaseValueAtMs
+    result.latestObservationAtMs !== null &&
+    newestLiveSourceAtMs < result.latestObservationAtMs
   ) {
     return result;
   }
@@ -110,6 +117,10 @@ export function applyLiveTokenHistory(
   return {
     ...result,
     fingerprint: liveFingerprint,
+    latestObservationAtMs:
+      result.fingerprint === liveFingerprint && result.latestObservationAtMs !== null
+        ? Math.max(result.latestObservationAtMs, newestLiveSourceAtMs)
+        : newestLiveSourceAtMs,
     fromMs,
     toMs,
     resolutionMs: policy.bucketMs,

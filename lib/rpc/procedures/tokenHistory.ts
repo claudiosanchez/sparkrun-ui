@@ -17,6 +17,7 @@ const TokenHistoryPointSchema = z.object({
 export const TokenHistoryResultSchema = z.object({
   cluster: z.string(),
   fingerprint: z.string().nullable(),
+  latestObservationAtMs: z.number().int().nonnegative().nullable(),
   range: TrendRangeSchema,
   fromMs: z.number().finite(),
   toMs: z.number().finite(),
@@ -39,6 +40,7 @@ function unavailableResult(cluster: string, range: TrendRange, nowMs: number): T
   return {
     cluster,
     fingerprint: null,
+    latestObservationAtMs: null,
     range,
     fromMs,
     toMs: nowMs,

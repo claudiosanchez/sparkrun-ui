@@ -43,6 +43,7 @@ export type TokenHistoryState = "ready" | "partial" | "empty" | "unavailable";
 export type TokenHistoryResult = {
   cluster: string;
   fingerprint: string | null;
+  latestObservationAtMs: number | null;
   range: TrendRange;
   fromMs: number;
   toMs: number;
@@ -135,6 +136,7 @@ export function aggregateTokenHistory(
 
   const cluster = options.cluster ?? newest?.observation.cluster ?? "";
   const fingerprint = newest?.observation.fingerprint ?? null;
+  const latestObservationAtMs = newest ? seriesTimestamp(newest.observation) : null;
   const buckets: Bucket[] = Array.from({ length: pointCount }, () => ({
     weightedSum: 0,
     validWeight: 0,
@@ -180,6 +182,7 @@ export function aggregateTokenHistory(
   return {
     cluster,
     fingerprint,
+    latestObservationAtMs,
     range: options.range,
     fromMs,
     toMs,

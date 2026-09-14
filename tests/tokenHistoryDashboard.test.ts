@@ -18,6 +18,7 @@ import {
 const result: TokenHistoryResult = {
   cluster: "alpha",
   fingerprint: "abc",
+  latestObservationAtMs: 10_000,
   range: "15m",
   fromMs: 0,
   toMs: 15_000,

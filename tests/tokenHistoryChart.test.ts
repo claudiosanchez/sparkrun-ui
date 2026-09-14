@@ -28,6 +28,7 @@ import type { TokenHistoryResult } from "@/lib/tokenHistory";
 const result: TokenHistoryResult = {
   cluster: "alpha",
   fingerprint: "fingerprint",
+  latestObservationAtMs: 11_000,
   range: "15m",
   fromMs: 1_000,
   toMs: 11_000,

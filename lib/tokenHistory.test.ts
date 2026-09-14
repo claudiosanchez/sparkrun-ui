@@ -15,6 +15,42 @@ describe("rangePolicy", () => {
 });
 
 describe("aggregateTokenHistory", () => {
+  it("retains the newest source timestamp instead of its chart bucket timestamp", () => {
+    const result = aggregateTokenHistory(
+      [
+        {
+          atMs: 399_000,
+          latestAtMs: 399_900,
+          cluster: "c032",
+          fingerprint: "new",
+          tokensPerSecond: 25,
+          weight: 2,
+        },
+      ],
+      { cluster: "c032", range: "5m", nowMs: 400_000 },
+    );
+
+    expect(result).toMatchObject({
+      fingerprint: "new",
+      latestObservationAtMs: 399_900,
+    });
+    expect(result.points[299]).toEqual({ atMs: 399_000, tokensPerSecond: 25 });
+  });
+
+  it("uses null when an empty result has no source observation", () => {
+    const result = aggregateTokenHistory([], {
+      cluster: "c032",
+      range: "5m",
+      nowMs: 400_000,
+    });
+
+    expect(result).toMatchObject({
+      fingerprint: null,
+      latestObservationAtMs: null,
+      state: "empty",
+    });
+  });
+
   it("materializes five minutes of seconds with zero, null gaps, and partial coverage", () => {
     const policy = rangePolicy("5m");
     const result = aggregateTokenHistory(

@@ -29,6 +29,7 @@ function result(range: "5m" | "15m" | "1d" | "7d" | "30d"): TokenHistoryResult {
   return {
     cluster: "c032",
     fingerprint: "fingerprint",
+    latestObservationAtMs: nowMs,
     range,
     fromMs: nowMs - policy.durationMs,
     toMs: nowMs,
@@ -99,7 +100,12 @@ describe("tokenHistory.get", () => {
 
     const response = await client.get({ cluster: "c032", range: "15m" });
 
-    expect(response).toMatchObject({ cluster: "c032", range: "15m", state: "unavailable" });
+    expect(response).toMatchObject({
+      cluster: "c032",
+      range: "15m",
+      latestObservationAtMs: null,
+      state: "unavailable",
+    });
     expect(response.points).toHaveLength(180);
   });
 

@@ -11,6 +11,7 @@ function historyResult(overrides: Partial<TokenHistoryResult> = {}): TokenHistor
   return {
     cluster: "C032",
     fingerprint: "series-a",
+    latestObservationAtMs: 299_000,
     range: "5m",
     fromMs: 0,
     toMs: 300_000,
@@ -93,19 +94,22 @@ describe("applyLiveTokenHistory", () => {
   });
 
   it("keeps a newer fetched fingerprint instead of applying a stale older series", () => {
-    const base = historyResult({
-      fingerprint: "series-b",
-      fromMs: 100_000,
-      toMs: 400_000,
-      coverage: 1 / 300,
-      points: Array.from({ length: 300 }, (_, index) => ({
-        atMs: 100_000 + index * 1_000,
-        tokensPerSecond: index === 299 ? 25 : null,
-      })),
-    });
+    const base = {
+      ...historyResult({
+        fingerprint: "series-b",
+        fromMs: 100_000,
+        toMs: 400_000,
+        coverage: 1 / 300,
+        points: Array.from({ length: 300 }, (_, index) => ({
+          atMs: 100_000 + index * 1_000,
+          tokensPerSecond: index === 299 ? 25 : null,
+        })),
+      }),
+      latestObservationAtMs: 399_900,
+    };
 
     const next = applyLiveTokenHistory(base, [
-      observation(300_000, 10, { fingerprint: "series-a" }),
+      observation(399_100, 10, { fingerprint: "series-a" }),
     ]);
 
     expect(next).toBe(base);
@@ -114,23 +118,27 @@ describe("applyLiveTokenHistory", () => {
   });
 
   it("accepts a genuinely newer fingerprint than the fetched base", () => {
-    const base = historyResult({
-      fingerprint: "series-b",
-      fromMs: 100_000,
-      toMs: 400_000,
-      coverage: 1 / 300,
-      points: Array.from({ length: 300 }, (_, index) => ({
-        atMs: 100_000 + index * 1_000,
-        tokensPerSecond: index === 299 ? 25 : null,
-      })),
-    });
+    const base = {
+      ...historyResult({
+        fingerprint: "series-b",
+        fromMs: 100_000,
+        toMs: 400_000,
+        coverage: 1 / 300,
+        points: Array.from({ length: 300 }, (_, index) => ({
+          atMs: 100_000 + index * 1_000,
+          tokensPerSecond: index === 299 ? 25 : null,
+        })),
+      }),
+      latestObservationAtMs: 399_900,
+    };
 
     const next = applyLiveTokenHistory(base, [
-      observation(399_500, null, { fingerprint: "series-c" }),
+      observation(399_950, null, { fingerprint: "series-c" }),
     ]);
 
     expect(next).not.toBe(base);
     expect(next.fingerprint).toBe("series-c");
+    expect(next.latestObservationAtMs).toBe(399_950);
     expect(next.state).toBe("empty");
   });
 

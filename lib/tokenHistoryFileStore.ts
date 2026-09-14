@@ -318,6 +318,7 @@ function unavailableResult(cluster: string, range: TrendRange, nowMs: number): T
   return {
     cluster,
     fingerprint: null,
+    latestObservationAtMs: null,
     range,
     fromMs,
     toMs: nowMs,
