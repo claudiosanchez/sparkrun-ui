@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { rpc } from "@/lib/rpc/client";
 import type { TokenHistoryResult, TrendRange } from "@/lib/tokenHistory";
 import {
@@ -83,6 +83,17 @@ export type TokenHistoryQueryState = {
   retry: () => void;
 };
 
+export function isTokenHistoryCacheable(result: TokenHistoryResult): boolean {
+  return result.state !== "unavailable";
+}
+
+export function shouldRetainUsableHistory(
+  previous: TokenHistoryResult | null,
+  next: TokenHistoryResult,
+): boolean {
+  return previous !== null && previous.state !== "unavailable" && next.state === "unavailable";
+}
+
 function initialState(cluster: string, range: TrendRange): Omit<TokenHistoryQueryState, "retry"> {
   const cached = historyCache.get(tokenHistoryCacheKey(cluster, range));
   const fresh = cached !== undefined && isFreshHistoryCache(cached.fetchedAtMs, Date.now());
@@ -113,6 +124,7 @@ function isAbortError(error: unknown): boolean {
 export function useTokenHistory(cluster: string, range: TrendRange): TokenHistoryQueryState {
   const [state, setState] = useState(() => initialState(cluster, range));
   const [retryNonce, setRetryNonce] = useState(0);
+  const retryKey = useRef<string | null>(null);
   const cacheKey = tokenHistoryCacheKey(cluster, range);
 
   useEffect(() => {
@@ -122,7 +134,10 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
     const cached = historyCache.get(cacheKey);
-    const fresh = cached !== undefined && isFreshHistoryCache(cached.fetchedAtMs, Date.now());
+    const forceRequest = retryKey.current === cacheKey;
+    if (forceRequest) retryKey.current = null;
+    const fresh =
+      !forceRequest && cached !== undefined && isFreshHistoryCache(cached.fetchedAtMs, Date.now());
 
     if (cached !== undefined) {
       setState((previous) => ({
@@ -149,8 +164,9 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
     async function load(): Promise<void> {
       if (signal.aborted) return;
 
+      let requestHandle: TokenHistoryRequestHandle | undefined;
       try {
-        const requestHandle = acquireTokenHistoryRequest(cacheKey, ac, (requestSignal) =>
+        requestHandle = acquireTokenHistoryRequest(cacheKey, ac, (requestSignal) =>
           rpc.tokenHistory.get({ cluster, range }, { signal: requestSignal }),
         );
         requestHandles.push(requestHandle);
@@ -165,16 +181,20 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
 
         const next = await requestHandle.promise;
         if (signal.aborted) return;
-        historyCache.set(cacheKey, { result: next, fetchedAtMs: Date.now() });
+        if (isTokenHistoryCacheable(next)) {
+          historyCache.set(cacheKey, { result: next, fetchedAtMs: Date.now() });
+        }
         setState((previous) => ({
           ...previous,
           requestedRange: range,
-          displayedRange: range,
-          result: next,
+          displayedRange: shouldRetainUsableHistory(previous.result, next)
+            ? previous.displayedRange
+            : range,
+          result: shouldRetainUsableHistory(previous.result, next) ? previous.result : next,
           isInitialLoading: false,
           isRefreshing: false,
-          isStale: false,
-          error: null,
+          isStale: shouldRetainUsableHistory(previous.result, next),
+          error: shouldRetainUsableHistory(previous.result, next) ? "History unavailable." : null,
         }));
       } catch (error) {
         if (signal.aborted || isAbortError(error)) return;
@@ -186,6 +206,12 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
           isStale: previous.result !== null,
           error: errorMessage(error),
         }));
+      } finally {
+        if (requestHandle !== undefined) {
+          const handleIndex = requestHandles.indexOf(requestHandle);
+          requestHandle.release();
+          if (handleIndex !== -1) requestHandles.splice(handleIndex, 1);
+        }
       }
     }
 
@@ -210,7 +236,10 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
   }, [cacheKey, cluster, range, retryNonce]);
 
   const retry = useCallback(() => {
-    if (!inFlightHistory.has(cacheKey)) setRetryNonce((current) => current + 1);
+    if (!inFlightHistory.has(cacheKey)) {
+      retryKey.current = cacheKey;
+      setRetryNonce((current) => current + 1);
+    }
   }, [cacheKey]);
 
   return {

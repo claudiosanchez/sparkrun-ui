@@ -9,7 +9,11 @@ import {
   summarizeTokenHistory,
   tokenHistoryCacheKey,
 } from "@/app/components/dashboard/tokenHistoryData";
-import { acquireTokenHistoryRequest } from "@/app/components/dashboard/useTokenHistory";
+import {
+  acquireTokenHistoryRequest,
+  isTokenHistoryCacheable,
+  shouldRetainUsableHistory,
+} from "@/app/components/dashboard/useTokenHistory";
 
 const result: TokenHistoryResult = {
   cluster: "alpha",
@@ -70,6 +74,21 @@ describe("token history dashboard data", () => {
       latestAtMs: null,
     });
     expect(formatTokensPerSecond(null)).toBe("—");
+  });
+
+  it("does not treat unavailable responses as fresh cache data", () => {
+    const unavailable: TokenHistoryResult = { ...result, state: "unavailable" };
+
+    expect(isTokenHistoryCacheable(result)).toBe(true);
+    expect(isTokenHistoryCacheable(unavailable)).toBe(false);
+  });
+
+  it("retains usable chart data when a background request is unavailable", () => {
+    const unavailable: TokenHistoryResult = { ...result, state: "unavailable" };
+
+    expect(shouldRetainUsableHistory(result, unavailable)).toBe(true);
+    expect(shouldRetainUsableHistory(null, unavailable)).toBe(false);
+    expect(shouldRetainUsableHistory(unavailable, unavailable)).toBe(false);
   });
 
   it("uses the typed token history RPC instead of a stream or direct cluster URL", () => {
