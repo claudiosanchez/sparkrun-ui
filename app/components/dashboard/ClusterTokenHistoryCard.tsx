@@ -19,16 +19,21 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
 }) {
   const query = useTokenHistory(cluster.name, range);
   const hasResult = query.result !== null;
-  const isLoading = query.isInitialLoading || query.isRefreshing;
+  const requestActive = query.isInitialLoading || query.isRefreshing;
   const displayedRange = query.displayedRange ?? query.result?.range ?? null;
   const unavailable = !hasResult || query.result?.state === "unavailable";
   const requestFailed = query.error !== null;
+  const hasUsableResult = hasResult && !unavailable;
+  const retainedFailure = hasUsableResult && requestFailed;
+  const staleResult = hasUsableResult && (query.isStale || retainedFailure);
 
   let badge: { label: string; tone: "neutral" | "green" | "amber" | "red" };
   if (!hasResult && query.isInitialLoading) {
     badge = { label: "Loading history", tone: "neutral" };
-  } else if (unavailable || requestFailed) {
+  } else if (unavailable) {
     badge = { label: "History unavailable", tone: "red" };
+  } else if (staleResult) {
+    badge = { label: "Stale", tone: "amber" };
   } else if (query.result?.state === "partial") {
     badge = { label: "Partial history", tone: "amber" };
   } else if (query.result?.state === "empty") {
@@ -48,11 +53,11 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
           <HistoryContent
             clusterName={cluster.name}
             query={query}
-            isLoading={isLoading}
+            requestActive={requestActive}
             displayedRange={displayedRange}
           />
         ) : hasResult && query.result?.state === "unavailable" ? (
-          <UnavailableContent query={query} hasCachedResult />
+          <UnavailableContent query={query} requestActive={requestActive} hasCachedResult />
         ) : query.isInitialLoading ? (
           <div
             className="flex h-56 items-center justify-center rounded-md bg-zinc-50 text-sm text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400"
@@ -61,7 +66,7 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
             Loading persisted token history…
           </div>
         ) : (
-          <UnavailableContent query={query} hasCachedResult={false} />
+          <UnavailableContent query={query} requestActive={requestActive} hasCachedResult={false} />
         )}
       </CardBody>
     </Card>
@@ -71,12 +76,12 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
 function HistoryContent({
   clusterName,
   query,
-  isLoading,
+  requestActive,
   displayedRange,
 }: {
   clusterName: string;
   query: TokenHistoryQueryState;
-  isLoading: boolean;
+  requestActive: boolean;
   displayedRange: TrendRange | null;
 }) {
   const result = query.result;
@@ -87,7 +92,7 @@ function HistoryContent({
       <div className="flex h-56 flex-col items-center justify-center gap-2 rounded-md bg-zinc-50 px-4 text-center text-sm text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400">
         <p>No token throughput samples have been collected for this range.</p>
         <p>Collection will populate this chart when the cluster reports Tokens/s.</p>
-        {isLoading && <LoadingRangeNote query={query} displayedRange={displayedRange} />}
+        {requestActive && <LoadingRangeNote query={query} displayedRange={displayedRange} />}
       </div>
     );
   }
@@ -111,8 +116,13 @@ function HistoryContent({
           Coverage: {Math.round(result.coverage * 100)}% · Freshness:{" "}
           {formatFreshness(summary.latestAtMs, query.isStale)}
         </p>
-        {isLoading && <LoadingRangeNote query={query} displayedRange={displayedRange} />}
+        {requestActive && <LoadingRangeNote query={query} displayedRange={displayedRange} />}
         {query.error !== null && <p className="text-red-700 dark:text-red-300">{query.error}</p>}
+        {(query.error !== null || query.isStale) && (
+          <Button type="button" size="sm" onClick={query.retry} disabled={requestActive}>
+            Retry
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -120,9 +130,11 @@ function HistoryContent({
 
 function UnavailableContent({
   query,
+  requestActive,
   hasCachedResult,
 }: {
   query: TokenHistoryQueryState;
+  requestActive: boolean;
   hasCachedResult: boolean;
 }) {
   return (
@@ -133,7 +145,7 @@ function UnavailableContent({
           : "Token history is unavailable for this cluster right now."}
       </p>
       {query.error !== null && <p className="text-red-700 dark:text-red-300">{query.error}</p>}
-      <Button type="button" size="sm" onClick={query.retry}>
+      <Button type="button" size="sm" onClick={query.retry} disabled={requestActive}>
         Retry
       </Button>
     </div>
