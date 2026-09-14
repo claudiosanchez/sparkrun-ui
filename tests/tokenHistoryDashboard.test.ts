@@ -101,6 +101,34 @@ describe("token history dashboard data", () => {
     expect(source).not.toMatch(/https?:\/\/[^"'`]*cluster/);
   });
 
+  it("owns one reconnecting telemetry stream in the history provider outside the card map", () => {
+    const providerSource = readFileSync(
+      new URL("../app/components/dashboard/TokenHistoryTelemetryProvider.tsx", import.meta.url),
+      "utf8",
+    );
+    const sectionSource = readFileSync(
+      new URL("../app/components/dashboard/ClusterTokenHistorySection.tsx", import.meta.url),
+      "utf8",
+    );
+    const cardSource = readFileSync(
+      new URL("../app/components/dashboard/ClusterTokenHistoryCard.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(providerSource.match(/rpc\.telemetry\.stream\(/g)).toHaveLength(1);
+    expect(providerSource).toContain("new AbortController()");
+    expect(providerSource).toContain("waitForRetry");
+    expect(providerSource).toContain("setConnectionHealthy(false)");
+    expect(providerSource).not.toContain("EventSource");
+    expect(providerSource).not.toContain("tokenHistory.stream");
+    expect(providerSource).not.toMatch(/https?:\/\/[^"'`]*cluster/);
+    expect(cardSource).not.toContain("telemetry.stream");
+    expect(sectionSource.match(/<TokenHistoryTelemetryProvider>/g)).toHaveLength(1);
+    expect(sectionSource.indexOf("<TokenHistoryTelemetryProvider>")).toBeLessThan(
+      sectionSource.indexOf("clusters.map"),
+    );
+  });
+
   it("keeps a shared request alive until its final card releases it", async () => {
     const owner = new AbortController();
     const otherCard = new AbortController();

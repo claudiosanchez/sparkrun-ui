@@ -29,6 +29,10 @@ vi.mock("@/app/components/dashboard/TokenHistoryChart", () => ({
   TokenHistoryChart: ({ ariaLabel }: { ariaLabel: string }) =>
     createElement("div", { role: "img", "aria-label": ariaLabel }),
 }));
+vi.mock("@/app/components/dashboard/LiveTokenHistoryContent", () => ({
+  LiveTokenHistoryContent: ({ result }: { result: TokenHistoryResult }) =>
+    createElement("div", { "data-live-range": result.range }, "live history"),
+}));
 vi.mock("@/app/components/dashboard/useTokenHistory", () => ({
   useTokenHistory: () => mockState.current,
 }));
@@ -52,9 +56,9 @@ const result: TokenHistoryResult = {
   ],
 };
 
-function renderCard(query: QueryFixture): string {
+function renderCard(query: QueryFixture, range: TrendRange = "15m"): string {
   mockState.current = query;
-  return renderToStaticMarkup(createElement(ClusterTokenHistoryCard, { cluster, range: "15m" }));
+  return renderToStaticMarkup(createElement(ClusterTokenHistoryCard, { cluster, range }));
 }
 
 function baseQuery(overrides: Partial<QueryFixture> = {}): QueryFixture {
@@ -105,6 +109,32 @@ it("renders history content after a successful client response", () => {
   expect(html).not.toContain("Loading persisted token history");
   expect(html).toContain("Latest: 0.0 Tokens/s");
   expect(html).toContain('role="img"');
+});
+
+it("mounts the live subscriber only for a usable displayed five-minute result", () => {
+  const fiveMinuteResult = { ...result, range: "5m" as const, resolutionMs: 1_000 };
+
+  const fiveMinuteHtml = renderCard(
+    baseQuery({
+      requestedRange: "5m",
+      displayedRange: "5m",
+      result: fiveMinuteResult,
+    }),
+    "5m",
+  );
+  const retainedLongRangeHtml = renderCard(
+    baseQuery({
+      requestedRange: "5m",
+      displayedRange: "15m",
+      result,
+      isRefreshing: true,
+    }),
+    "5m",
+  );
+
+  expect(fiveMinuteHtml).toContain('data-live-range="5m"');
+  expect(retainedLongRangeHtml).not.toContain("data-live-range");
+  expect(retainedLongRangeHtml).toContain('role="img"');
 });
 
 it("renders an honest collecting message without a chart for empty history", () => {

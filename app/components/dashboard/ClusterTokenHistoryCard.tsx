@@ -2,10 +2,11 @@
 
 import { memo } from "react";
 import type { ClusterEntry } from "@/lib/schemas";
-import type { TrendRange } from "@/lib/tokenHistory";
+import type { TokenHistoryResult, TrendRange } from "@/lib/tokenHistory";
 import { Badge } from "@/app/components/ui/Badge";
 import { Button } from "@/app/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle } from "@/app/components/ui/Card";
+import { LiveTokenHistoryContent } from "./LiveTokenHistoryContent";
 import { summarizeTokenHistory } from "./tokenHistoryData";
 import { TokenHistoryChart } from "./TokenHistoryChart";
 import { useTokenHistory, type TokenHistoryQueryState } from "./useTokenHistory";
@@ -50,12 +51,27 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
       </CardHeader>
       <CardBody>
         {hasResult && !unavailable ? (
-          <HistoryContent
-            clusterName={cluster.name}
-            query={query}
-            requestActive={requestActive}
-            displayedRange={displayedRange}
-          />
+          displayedRange === "5m" ? (
+            <LiveTokenHistoryContent clusterName={cluster.name} result={query.result!}>
+              {(liveResult) => (
+                <HistoryContent
+                  clusterName={cluster.name}
+                  query={query}
+                  result={liveResult}
+                  requestActive={requestActive}
+                  displayedRange={displayedRange}
+                />
+              )}
+            </LiveTokenHistoryContent>
+          ) : (
+            <HistoryContent
+              clusterName={cluster.name}
+              query={query}
+              result={query.result!}
+              requestActive={requestActive}
+              displayedRange={displayedRange}
+            />
+          )
         ) : hasResult && query.result?.state === "unavailable" ? (
           <UnavailableContent query={query} requestActive={requestActive} hasCachedResult />
         ) : query.isInitialLoading ? (
@@ -76,17 +92,16 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
 function HistoryContent({
   clusterName,
   query,
+  result,
   requestActive,
   displayedRange,
 }: {
   clusterName: string;
   query: TokenHistoryQueryState;
+  result: TokenHistoryResult;
   requestActive: boolean;
   displayedRange: TrendRange | null;
 }) {
-  const result = query.result;
-  if (result === null) return null;
-
   if (result.state === "empty") {
     return (
       <div className="flex h-56 flex-col items-center justify-center gap-2 rounded-md bg-zinc-50 px-4 text-center text-sm text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400">
