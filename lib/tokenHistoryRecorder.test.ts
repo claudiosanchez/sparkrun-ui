@@ -73,6 +73,7 @@ function snapshot(
       runningRequests: { value: 0, state: "live", observedAtMs: polledAtMs },
       waitingRequests: { value: 0, state: "live", observedAtMs: polledAtMs },
       kvCachePercent: { value: 0, state: "live", observedAtMs: polledAtMs },
+      kvCacheCapacityTokens: { value: null, state: "unavailable", observedAtMs: polledAtMs },
     },
   };
 }

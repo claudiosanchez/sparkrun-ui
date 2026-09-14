@@ -23,6 +23,11 @@ function vllmEvent(cluster: string, revision: number, tokensPerSecond = 12) {
         runningRequests: { value: 1, state: "live" as const, observedAtMs: revision * 1_000 },
         waitingRequests: { value: 0, state: "live" as const, observedAtMs: revision * 1_000 },
         kvCachePercent: { value: 25, state: "live" as const, observedAtMs: revision * 1_000 },
+        kvCacheCapacityTokens: {
+          value: 1_000,
+          state: "live" as const,
+          observedAtMs: revision * 1_000,
+        },
       },
     },
   };

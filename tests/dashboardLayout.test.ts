@@ -146,6 +146,7 @@ it("renders three accessible rings and honest inference fields", () => {
   }
   expect(html.match(/role="progressbar"/g) ?? []).toHaveLength(3);
   expect(html).toContain("Client and session counts are not collected");
+  expect(html).toContain("KV cache occupancy is shown separately from host memory");
 });
 
 it("preserves zero and renders unavailable KV without a numeric value", () => {

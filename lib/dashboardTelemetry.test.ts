@@ -17,6 +17,7 @@ function vllmPayload(cluster: string, tokensPerSecond: number) {
       runningRequests: { value: 1, state: "live" as const, observedAtMs },
       waitingRequests: { value: 0, state: "live" as const, observedAtMs },
       kvCachePercent: { value: 25, state: "live" as const, observedAtMs },
+      kvCacheCapacityTokens: { value: 1_000, state: "live" as const, observedAtMs },
     },
   };
 }

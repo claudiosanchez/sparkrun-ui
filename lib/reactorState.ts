@@ -64,6 +64,11 @@ export function deriveReactorState({
       ? "—"
       : `${(used / 1024).toFixed(1)} / ${(total / 1024).toFixed(1)} GB`;
   }
+  function tokenCountText(value: number): string {
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+    return String(Math.round(value));
+  }
 
   const telemetryState = reconnecting ? "reconnecting" : valid ? "live" : "unavailable";
   const serviceState = service?.state ?? "checking";
@@ -114,6 +119,11 @@ export function deriveReactorState({
   };
   const kvReading = vllmReading("kvCachePercent");
   const kvState = effectiveState(kvReading);
+  const kvCapacityReading = vllmReading("kvCacheCapacityTokens");
+  const kvDetail =
+    kvCapacityReading.value === null
+      ? "Capacity not reported"
+      : `${tokenCountText(kvCapacityReading.value)} cache-token capacity`;
   return {
     name: cluster.name,
     hostText: cluster.hosts.join(", ") || "No hosts configured",
@@ -154,7 +164,7 @@ export function deriveReactorState({
       kv: {
         label: "KV cache occupancy",
         percent: kvReading.value,
-        detail: "Capacity not reported",
+        detail: kvDetail,
         source: "vllm-metrics" as const,
         state: kvState,
       },

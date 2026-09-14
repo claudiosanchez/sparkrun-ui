@@ -34,6 +34,56 @@ describe("parseVllmMetrics", () => {
     });
   });
 
+  it("reads C032's group-aware KV capacity without inventing resident token use", () => {
+    const parsed = parseVllmMetrics(`
+      vllm:kv_cache_usage_perc{engine="0",model_name="qwen"} 0.25
+      vllm:cache_config_info{block_size="1072",cache_dtype="fp8",engine="0",kv_cache_size_tokens="3174971",num_gpu_blocks="3040"} 1
+    `);
+
+    expect(parsed.kvCacheCapacityTokens).toBe(3_174_971);
+    expect("kvCacheUsedTokens" in parsed).toBe(false);
+  });
+
+  it("keeps per-engine cache capacity unavailable instead of fabricating a cluster total", () => {
+    const parsed = parseVllmMetrics(`
+      vllm:kv_cache_usage_perc{engine="0",model_name="qwen"} 0.25
+      vllm:kv_cache_usage_perc{engine="1",model_name="qwen"} 0.75
+      vllm:cache_config_info{engine="0",kv_cache_size_tokens="100"} 1
+      vllm:cache_config_info{engine="1",kv_cache_size_tokens="900"} 1
+    `);
+
+    expect(parsed.kvCacheCapacityTokens).toBeNull();
+  });
+
+  it("withholds capacity when cache occupancy exposes another engine", () => {
+    const parsed = parseVllmMetrics(`
+      vllm:kv_cache_usage_perc{engine="0",model_name="qwen"} 0.25
+      vllm:kv_cache_usage_perc{engine="1",model_name="qwen"} 0.75
+      vllm:cache_config_info{engine="0",kv_cache_size_tokens="100"} 1
+    `);
+
+    expect(parsed.kvCacheCapacityTokens).toBeNull();
+  });
+
+  it("withholds capacity when the only occupancy engine differs from the config engine", () => {
+    const parsed = parseVllmMetrics(`
+      vllm:kv_cache_usage_perc{engine="1",model_name="qwen"} 0.25
+      vllm:cache_config_info{engine="0",kv_cache_size_tokens="100"} 1
+    `);
+
+    expect(parsed.kvCacheCapacityTokens).toBeNull();
+  });
+
+  it("withholds capacity when one engine reports conflicting cache configuration", () => {
+    const parsed = parseVllmMetrics(`
+      vllm:kv_cache_usage_perc{engine="0",model_name="qwen"} 0.25
+      vllm:cache_config_info{engine="0",kv_cache_size_tokens="100"} 1
+      vllm:cache_config_info{engine="0",kv_cache_size_tokens="200"} 1
+    `);
+
+    expect(parsed.kvCacheCapacityTokens).toBeNull();
+  });
+
   it("canonicalizes equivalent label sets and skips comments and blank lines", () => {
     const parsed = parseVllmMetrics(`
       # a comment
@@ -65,6 +115,15 @@ describe("parseVllmMetrics", () => {
         "vllm:kv_cache_usage_perc",
       ]),
     );
+  });
+
+  it("rejects a KV occupancy fraction above 100 percent", () => {
+    const parsed = parseVllmMetrics(`
+      vllm:kv_cache_usage_perc{engine="0",model_name="qwen"} 1.5
+    `);
+
+    expect(parsed.kvCachePercent).toBeNull();
+    expect(parsed.invalidFamilies).toEqual(new Set(["vllm:kv_cache_usage_perc"]));
   });
 
   it("returns null for a family with no valid samples", () => {
@@ -174,6 +233,7 @@ describe("staleClusterSnapshot", () => {
         runningRequests: { value: 1, state: "live" as const, observedAtMs: 60_000 },
         waitingRequests: { value: 0, state: "live" as const, observedAtMs: 60_000 },
         kvCachePercent: { value: 50, state: "live" as const, observedAtMs: 60_000 },
+        kvCacheCapacityTokens: { value: 1_000, state: "live" as const, observedAtMs: 60_000 },
       },
     };
     const stale = staleClusterSnapshot(liveSnapshot, 62_000, "HTTP 503");

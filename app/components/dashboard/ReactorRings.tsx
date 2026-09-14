@@ -147,6 +147,9 @@ export function ReactorRings({
       <p aria-live="polite" className="text-center text-xs text-zinc-500 dark:text-zinc-400">
         {inference.stateText}
       </p>
+      <p className="text-center text-[11px] text-zinc-500 dark:text-zinc-400">
+        KV cache occupancy is shown separately from host memory.
+      </p>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-zinc-200 pt-4 dark:border-zinc-800">
         <div>
           <dt className="text-xs text-zinc-500 dark:text-zinc-400">Clients</dt>

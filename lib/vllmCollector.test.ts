@@ -9,7 +9,8 @@ const body = `
 vllm:generation_tokens_total{model_name="qwen"} 100
 vllm:num_requests_running{model_name="qwen"} 1
 vllm:num_requests_waiting{model_name="qwen"} 0
-vllm:kv_cache_usage_perc{model_name="qwen"} 0.25
+vllm:kv_cache_usage_perc{engine="0",model_name="qwen"} 0.25
+vllm:cache_config_info{engine="0",kv_cache_size_tokens="1000"} 1
 `;
 
 function response(text: string, status = 200): Response {
@@ -219,7 +220,10 @@ describe("createVllmCollectorRegistry", () => {
       cluster: "c032",
       sourceHost: "100.65.40.24",
       state: "live",
-      metrics: { runningRequests: { value: 1, state: "live" } },
+      metrics: {
+        runningRequests: { value: 1, state: "live" },
+        kvCacheCapacityTokens: { value: 1_000, state: "live" },
+      },
     });
 
     removeFirst();
