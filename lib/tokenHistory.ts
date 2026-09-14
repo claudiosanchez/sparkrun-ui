@@ -1,21 +1,37 @@
+import { z } from "zod";
+
 export type TrendRange = "5m" | "15m" | "1d" | "7d" | "30d";
 
-export const TREND_RANGES = ["5m", "15m", "1d", "7d", "30d"] as const satisfies readonly TrendRange[];
+export const TREND_RANGES = [
+  "5m",
+  "15m",
+  "1d",
+  "7d",
+  "30d",
+] as const satisfies readonly TrendRange[];
 
 export function isTrendRange(range: unknown): range is TrendRange {
   return typeof range === "string" && TREND_RANGES.includes(range as TrendRange);
 }
 
-export type TokenObservation = {
-  atMs: number;
-  cluster: string;
-  fingerprint: string;
-  tokensPerSecond: number | null;
-  /** Number of equally-timed valid samples represented by this observation. */
-  weight?: number;
-  /** Latest source timestamp when this observation is a compacted bucket. */
-  latestAtMs?: number;
-};
+export const TokenObservationSchema = z
+  .object({
+    atMs: z.number().int().nonnegative(),
+    cluster: z.string().min(1),
+    fingerprint: z.string().min(1),
+    tokensPerSecond: z.number().nonnegative().nullable(),
+    /** Number of equally-timed valid samples represented by this observation. */
+    weight: z.number().positive().optional(),
+    /** Latest source timestamp when this observation is a compacted bucket. */
+    latestAtMs: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    (observation) =>
+      observation.latestAtMs === undefined || observation.latestAtMs >= observation.atMs,
+    { message: "latestAtMs must not precede atMs", path: ["latestAtMs"] },
+  );
+export type TokenObservation = z.infer<typeof TokenObservationSchema>;
 
 export type TokenHistoryPoint = {
   atMs: number;

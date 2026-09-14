@@ -149,6 +149,104 @@ describe("createTokenHistoryRecorder", () => {
     ]);
   });
 
+  it("publishes each deduplicated normalized observation before its durable write", async () => {
+    const registry = createFakeRegistry();
+    const calls: Array<{ kind: "publish" | "record"; observation: TokenObservation }> = [];
+    let releaseWrite: (() => void) | undefined;
+    const delayedWrite = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const store: TokenHistoryStore = {
+      record: vi.fn((observation: TokenObservation) => {
+        calls.push({ kind: "record", observation });
+        return delayedWrite;
+      }),
+      query: vi.fn(),
+      close: vi.fn(async () => {}),
+    };
+    const publishObservation = vi.fn((observation: TokenObservation) => {
+      calls.push({ kind: "publish", observation });
+    });
+    const recorder = createTokenHistoryRecorder({
+      clusters: async () => [{ name: "c032", hosts: ["host-a"], is_default: true }],
+      registry: registry as never,
+      store,
+      now: () => 100_000,
+      wait: waitUntilStopped,
+      publishObservation,
+    });
+
+    await recorder.start();
+    registry.emit("c032", snapshot("c032", 100_000, 0));
+    registry.emit("c032", snapshot("c032", 100_000, 99));
+    registry.emit("c032", snapshot("c032", 101_000, 12));
+    registry.emit("c032", snapshot("c032", 102_000, 99, "stale"));
+
+    expect(calls.map(({ kind }) => kind)).toEqual([
+      "publish",
+      "record",
+      "publish",
+      "record",
+      "publish",
+      "record",
+    ]);
+    expect(
+      calls.filter(({ kind }) => kind === "publish").map(({ observation }) => observation),
+    ).toEqual([
+      {
+        atMs: 100_000,
+        cluster: "c032",
+        fingerprint: fingerprintHosts(["host-a"]),
+        tokensPerSecond: 0,
+      },
+      {
+        atMs: 101_000,
+        cluster: "c032",
+        fingerprint: fingerprintHosts(["host-a"]),
+        tokensPerSecond: 12,
+      },
+      {
+        atMs: 102_000,
+        cluster: "c032",
+        fingerprint: fingerprintHosts(["host-a"]),
+        tokensPerSecond: null,
+      },
+    ]);
+    expect(calls[0].observation).toBe(calls[1].observation);
+    expect(calls[2].observation).toBe(calls[3].observation);
+    expect(calls[4].observation).toBe(calls[5].observation);
+
+    releaseWrite?.();
+    await recorder.stop();
+  });
+
+  it("contains publisher failures without suppressing durable writes", async () => {
+    const registry = createFakeRegistry();
+    const { store } = storeSpy();
+    const publishObservation = vi
+      .fn<(observation: TokenObservation) => void | Promise<void>>()
+      .mockImplementationOnce(() => {
+        throw new Error("publisher unavailable");
+      })
+      .mockRejectedValueOnce(new Error("publisher disconnected"));
+    const recorder = createTokenHistoryRecorder({
+      clusters: async () => [{ name: "c032", hosts: ["host-a"], is_default: true }],
+      registry: registry as never,
+      store,
+      now: () => 100_000,
+      wait: waitUntilStopped,
+      publishObservation,
+    });
+
+    await recorder.start();
+    registry.emit("c032", snapshot("c032", 100_000, 1));
+    registry.emit("c032", snapshot("c032", 101_000, 2));
+    await recorder.stop();
+
+    expect(publishObservation).toHaveBeenCalledTimes(2);
+    expect(store.record).toHaveBeenCalledTimes(2);
+  });
+
   it("retains subscriptions after a temporary discovery failure", async () => {
     const registry = createFakeRegistry();
     const { store } = storeSpy();
@@ -235,6 +333,7 @@ describe("createTokenHistoryRecorder", () => {
 
   it("contains asynchronous store failures and continues collecting", async () => {
     const registry = createFakeRegistry();
+    const published: TokenObservation[] = [];
     const record = vi
       .fn<NonNullable<TokenHistoryStore["record"]>>()
       .mockRejectedValueOnce(new Error("disk full"))
@@ -246,6 +345,9 @@ describe("createTokenHistoryRecorder", () => {
       store,
       now: () => 100_000,
       wait: waitUntilStopped,
+      publishObservation: (observation) => {
+        published.push(observation);
+      },
     });
 
     await recorder.start();
@@ -254,5 +356,6 @@ describe("createTokenHistoryRecorder", () => {
     await recorder.stop();
 
     expect(record).toHaveBeenCalledTimes(2);
+    expect(published.map(({ tokensPerSecond }) => tokensPerSecond)).toEqual([1, 2]);
   });
 });

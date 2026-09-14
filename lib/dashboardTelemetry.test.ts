@@ -34,6 +34,20 @@ function publishVllm(
   });
 }
 
+function tokenHistoryEvent(cluster: string, atMs: number, tokensPerSecond: number | null) {
+  return {
+    topic: "token-history" as const,
+    cluster,
+    observedAtMs: atMs,
+    payload: {
+      atMs,
+      cluster,
+      fingerprint: `fingerprint-${cluster}`,
+      tokensPerSecond,
+    },
+  };
+}
+
 describe("DashboardTelemetryEventSchema", () => {
   it("validates every v1 dashboard topic and requires clusters only on cluster topics", () => {
     const common = { version: 1 as const, revision: 1, observedAtMs: 10_000 };
@@ -80,9 +94,65 @@ describe("DashboardTelemetryEventSchema", () => {
       }),
     ).toThrow();
   });
+
+  it.each([0, 12.5, null])("accepts a normalized token-history value of %s", (value) => {
+    const event = {
+      version: 1 as const,
+      revision: 1,
+      ...tokenHistoryEvent("c032", 10_000, value),
+    };
+
+    expect(DashboardTelemetryEventSchema.parse(event)).toEqual(event);
+  });
+
+  it.each([
+    ["an arbitrary URL", { url: "http://c032.local:8000/metrics" }],
+    ["a non-finite observation", { payload: { tokensPerSecond: Number.POSITIVE_INFINITY } }],
+    ["a mismatched cluster", { payload: { cluster: "c458" } }],
+    ["a mismatched timestamp", { payload: { atMs: 9_999 } }],
+    ["an empty fingerprint", { payload: { fingerprint: "" } }],
+    ["a negative token rate", { payload: { tokensPerSecond: -1 } }],
+  ])("rejects token-history events containing %s", (_name, override) => {
+    const base = {
+      version: 1 as const,
+      revision: 1,
+      ...tokenHistoryEvent("c032", 10_000, 12),
+    };
+    const event = {
+      ...base,
+      ...override,
+      payload: { ...base.payload, ...("payload" in override ? override.payload : {}) },
+    };
+
+    expect(() => DashboardTelemetryEventSchema.parse(event)).toThrow();
+  });
 });
 
 describe("dashboard telemetry broker", () => {
+  it("replays and coalesces the newest token-history event per cluster", async () => {
+    const broker = createDashboardTelemetryBroker();
+    const queued = broker.subscribe();
+    broker.publish(tokenHistoryEvent("c032", 10_000, 0));
+    const latestC032 = broker.publish(tokenHistoryEvent("c032", 11_000, 8));
+    const latestC458 = broker.publish(tokenHistoryEvent("c458", 11_000, null));
+
+    expect(latestC032.revision).toBe(2);
+    expect(latestC458.revision).toBe(3);
+    expect(queued.pendingEventCount).toBe(2);
+    await expect(queued.next()).resolves.toEqual({ value: latestC032, done: false });
+    await expect(queued.next()).resolves.toEqual({ value: latestC458, done: false });
+
+    const controller = new AbortController();
+    const replay = broker.subscribe(controller.signal);
+    await expect(replay.next()).resolves.toEqual({ value: latestC032, done: false });
+    await expect(replay.next()).resolves.toEqual({ value: latestC458, done: false });
+    expect(broker.activeSubscriptionCount).toBe(2);
+    controller.abort();
+    expect(broker.activeSubscriptionCount).toBe(1);
+
+    await queued.return();
+  });
+
   it("coalesces only the latest pending event for the same topic and cluster", async () => {
     const broker = createDashboardTelemetryBroker();
     const subscription = broker.subscribe();

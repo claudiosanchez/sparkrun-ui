@@ -2,6 +2,7 @@ import { z } from "zod";
 import { MonitorTickSchema } from "./monitor";
 import { ClusterStatusSchema } from "./schemas";
 import { ServiceHealthSchema } from "./rpc/procedures/services";
+import { TokenObservationSchema } from "./tokenHistory";
 import { VllmClusterSnapshotSchema } from "./vllmMetrics";
 
 const EventEnvelopeSchema = z.object({
@@ -39,12 +40,47 @@ const ServiceEventSchema = EventEnvelopeSchema.extend({
   payload: ServiceHealthSchema,
 }).strict();
 
+const TokenHistoryEventBaseSchema = EventEnvelopeSchema.extend({
+  topic: z.literal("token-history"),
+  cluster: z.string().min(1),
+  payload: TokenObservationSchema,
+}).strict();
+
+function validateTokenHistoryEnvelope(
+  event: { cluster: string; observedAtMs: number; payload: { cluster: string; atMs: number } },
+  context: { addIssue: (issue: { code: "custom"; message: string; path: string[] }) => void },
+): void {
+  if (event.cluster !== event.payload.cluster) {
+    context.addIssue({
+      code: "custom",
+      message: "Token history event cluster must match its payload cluster",
+      path: ["payload", "cluster"],
+    });
+  }
+  if (event.observedAtMs !== event.payload.atMs) {
+    context.addIssue({
+      code: "custom",
+      message: "Token history event timestamp must match its payload timestamp",
+      path: ["payload", "atMs"],
+    });
+  }
+}
+
+const TokenHistoryEventSchema = TokenHistoryEventBaseSchema.superRefine(
+  validateTokenHistoryEnvelope,
+);
+const TokenHistoryPublishEventSchema = TokenHistoryEventBaseSchema.omit({
+  version: true,
+  revision: true,
+}).superRefine(validateTokenHistoryEnvelope);
+
 export const DashboardTelemetryEventSchema = z.discriminatedUnion("topic", [
   VllmEventSchema,
   MonitorEventSchema,
   OverviewMonitorEventSchema,
   StatusEventSchema,
   ServiceEventSchema,
+  TokenHistoryEventSchema,
 ]);
 export type DashboardTelemetryEvent = z.infer<typeof DashboardTelemetryEventSchema>;
 
@@ -54,6 +90,7 @@ const DashboardTelemetryPublishEventSchema = z.discriminatedUnion("topic", [
   OverviewMonitorEventSchema.omit({ version: true, revision: true }),
   StatusEventSchema.omit({ version: true, revision: true }),
   ServiceEventSchema.omit({ version: true, revision: true }),
+  TokenHistoryPublishEventSchema,
 ]);
 export type DashboardTelemetryPublishEvent = z.input<typeof DashboardTelemetryPublishEventSchema>;
 
