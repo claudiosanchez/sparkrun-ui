@@ -6,11 +6,11 @@ import type { TokenObservation } from "@/lib/tokenHistory";
 import { reduceLiveTokenObservations } from "./liveTokenHistory";
 
 export type TokenHistoryTelemetrySnapshot = Readonly<{
-  connectionHealthy: boolean;
   observations: readonly TokenObservation[];
 }>;
 
 export type TokenHistoryTelemetryStore = {
+  readonly connectionHealthy: boolean;
   publish: (event: unknown) => boolean;
   getSnapshot: (cluster: string) => TokenHistoryTelemetrySnapshot;
   subscribe: (cluster: string, listener: () => void) => () => void;
@@ -27,7 +27,7 @@ export function createTokenHistoryTelemetryStore(): TokenHistoryTelemetryStore {
   const getSnapshot = (cluster: string): TokenHistoryTelemetrySnapshot => {
     const existing = snapshots.get(cluster);
     if (existing !== undefined) return existing;
-    const initial = { connectionHealthy, observations: [] } as const;
+    const initial = { observations: [] } as const;
     snapshots.set(cluster, initial);
     return initial;
   };
@@ -37,15 +37,19 @@ export function createTokenHistoryTelemetryStore(): TokenHistoryTelemetryStore {
   };
 
   return {
+    get connectionHealthy() {
+      return connectionHealthy;
+    },
     publish(input) {
       const parsed = DashboardTelemetryEventSchema.safeParse(input);
       if (!parsed.success || parsed.data.topic !== "token-history") return false;
 
       const event: Extract<DashboardTelemetryEvent, { topic: "token-history" }> = parsed.data;
       const previous = getSnapshot(event.cluster);
+      const observations = reduceLiveTokenObservations(previous.observations, event.payload);
+      if (observations === previous.observations) return false;
       snapshots.set(event.cluster, {
-        connectionHealthy,
-        observations: reduceLiveTokenObservations(previous.observations, event.payload),
+        observations,
       });
       notify(event.cluster);
       return true;
@@ -68,17 +72,7 @@ export function createTokenHistoryTelemetryStore(): TokenHistoryTelemetryStore {
       };
     },
     setConnectionHealthy(healthy) {
-      if (connectionHealthy === healthy) return;
       connectionHealthy = healthy;
-      const clusters = new Set([...snapshots.keys(), ...listeners.keys()]);
-      for (const cluster of clusters) {
-        const previous = getSnapshot(cluster);
-        snapshots.set(cluster, {
-          connectionHealthy,
-          observations: previous.observations,
-        });
-        notify(cluster);
-      }
     },
   };
 }

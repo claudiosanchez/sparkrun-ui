@@ -9,6 +9,8 @@ export function reduceLiveTokenObservations(
 ): readonly TokenObservation[] {
   const currentFingerprint = previous.at(-1)?.fingerprint;
   if (currentFingerprint !== undefined && currentFingerprint !== observation.fingerprint) {
+    const newestAtMs = previous.at(-1)?.atMs;
+    if (newestAtMs !== undefined && observation.atMs < newestAtMs) return previous;
     return [observation];
   }
 

@@ -139,6 +139,29 @@ describe("applyLiveTokenHistory", () => {
 });
 
 describe("reduceLiveTokenObservations", () => {
+  it("rejects an older observation from a stale fingerprint series", () => {
+    const current = [observation(300_000, 20, { fingerprint: "series-b" })];
+
+    const reduced = reduceLiveTokenObservations(
+      current,
+      observation(250_000, 10, { fingerprint: "series-a" }),
+    );
+
+    expect(reduced).toBe(current);
+    expect(reduced).toEqual([observation(300_000, 20, { fingerprint: "series-b" })]);
+  });
+
+  it("accepts a newer observation when the fingerprint series changes", () => {
+    const current = [observation(250_000, 10, { fingerprint: "series-a" })];
+
+    const reduced = reduceLiveTokenObservations(
+      current,
+      observation(300_000, null, { fingerprint: "series-b" }),
+    );
+
+    expect(reduced).toEqual([observation(300_000, null, { fingerprint: "series-b" })]);
+  });
+
   it("bounds one cluster to the newest five-minute, 300-observation sequence", () => {
     let observations: readonly TokenObservation[] = [];
     for (let atMs = 1_000; atMs <= 305_000; atMs += 1_000) {
@@ -152,6 +175,26 @@ describe("reduceLiveTokenObservations", () => {
 });
 
 describe("token history telemetry store", () => {
+  it("keeps cluster snapshots and listeners stable across connection-health transitions", () => {
+    const store = createTokenHistoryTelemetryStore();
+    const c032Listener = vi.fn();
+    const c458Listener = vi.fn();
+    store.subscribe("C032", c032Listener);
+    store.subscribe("C458", c458Listener);
+    const c032Before = store.getSnapshot("C032");
+    const c458Before = store.getSnapshot("C458");
+
+    store.setConnectionHealthy(true);
+    expect(store.connectionHealthy).toBe(true);
+    store.setConnectionHealthy(false);
+
+    expect(store.connectionHealthy).toBe(false);
+    expect(store.getSnapshot("C032")).toBe(c032Before);
+    expect(store.getSnapshot("C458")).toBe(c458Before);
+    expect(c032Listener).not.toHaveBeenCalled();
+    expect(c458Listener).not.toHaveBeenCalled();
+  });
+
   it("notifies only the published cluster and preserves untouched snapshot identity", () => {
     const store = createTokenHistoryTelemetryStore();
     const c032Listener = vi.fn();
