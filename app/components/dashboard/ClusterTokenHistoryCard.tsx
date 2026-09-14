@@ -32,12 +32,12 @@ export const ClusterTokenHistoryCard = memo(function ClusterTokenHistoryCard({
     badge = { label: "Loading history", tone: "neutral" };
   } else if (unavailable) {
     badge = { label: "History unavailable", tone: "red" };
+  } else if (query.result?.state === "empty") {
+    badge = { label: "Collecting history", tone: "neutral" };
   } else if (staleResult) {
     badge = { label: "Stale", tone: "amber" };
   } else if (query.result?.state === "partial") {
     badge = { label: "Partial history", tone: "amber" };
-  } else if (query.result?.state === "empty") {
-    badge = { label: "Collecting history", tone: "neutral" };
   } else {
     badge = { label: "Ready", tone: "green" };
   }
