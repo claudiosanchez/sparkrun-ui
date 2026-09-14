@@ -53,7 +53,7 @@ const inference: ReactorState["inference"] = {
   sessionsText: "—",
 };
 
-it("keeps the existing overview above the added reactor fleet and workload section", () => {
+it("uses the saved-cluster overview instead of an aggregate overview card", () => {
   const html = renderToStaticMarkup(
     createElement(DashboardLive, {
       clusters: [{ name: "lab", hosts: ["127.0.0.1"], is_default: true }],
@@ -61,11 +61,11 @@ it("keeps the existing overview above the added reactor fleet and workload secti
       recipeByCluster: new Map(),
     }),
   );
-  expect(html).toContain("Cluster overview");
+  expect(html).not.toContain("Cluster overview");
+  expect(html).toContain('aria-label="Saved cluster overview"');
   expect(html).toContain('aria-label="Saved cluster fleet"');
-  expect(html).toContain("Unified memory");
   expect(html).toContain(">Workloads</h2>");
-  expect(html.indexOf("Cluster overview")).toBeLessThan(
+  expect(html.indexOf('aria-label="Saved cluster overview"')).toBeLessThan(
     html.indexOf('aria-label="Saved cluster fleet"'),
   );
   expect(html.indexOf('aria-label="Saved cluster fleet"')).toBeLessThan(
@@ -91,9 +91,6 @@ it("renders every saved cluster in a separate overview section", () => {
 
   expect(html).toContain('aria-label="Saved cluster overview"');
   for (const name of ["alpha", "beta", "gamma"]) expect(html).toContain(name);
-  expect(html.indexOf("Cluster overview")).toBeLessThan(
-    html.indexOf('aria-label="Saved cluster overview"'),
-  );
   expect(html.indexOf('aria-label="Saved cluster overview"')).toBeLessThan(
     html.indexOf('aria-label="Saved cluster fleet"'),
   );

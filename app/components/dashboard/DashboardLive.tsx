@@ -8,7 +8,6 @@ import { Badge } from "@/app/components/ui/Badge";
 import { Button } from "@/app/components/ui/Button";
 import { WorkloadCard } from "./WorkloadCard";
 import { TwinReactorFleet } from "./TwinReactorFleet";
-import { AggregateStats } from "./AggregateStats";
 import { ClusterOverviewSection } from "./ClusterOverviewSection";
 import { ClusterTokenHistorySection } from "./ClusterTokenHistorySection";
 import { ReactorStateProvider } from "./ReactorStateContext";
@@ -44,9 +43,6 @@ export function DashboardLive({
               <DashboardWorkloadCount clusters={clusters} />
             </div>
           </div>
-
-          <AggregateStats />
-
           <ClusterOverviewSection clusters={clusters} />
 
           <TwinReactorFleet clusters={clusters} />
