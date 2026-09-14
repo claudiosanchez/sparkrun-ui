@@ -49,11 +49,7 @@ export function ReactorCard({ cluster }: { cluster: ClusterEntry }) {
         </div>
 
         <div className="flex flex-col gap-2 py-2">
-          <ReactorRings
-            rings={state.rings}
-            inference={state.inference}
-            modelText={state.modelText}
-          />
+          <ReactorRings rings={state.rings} inference={state.inference} />
           <p aria-live="polite" className="text-center text-xs text-zinc-500 dark:text-zinc-400">
             {state.freshnessText}
           </p>
