@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { TokenHistoryResult } from "@/lib/tokenHistory";
 import {
   TOKEN_HISTORY_RANGES,
@@ -9,6 +9,7 @@ import {
   summarizeTokenHistory,
   tokenHistoryCacheKey,
 } from "@/app/components/dashboard/tokenHistoryData";
+import { acquireTokenHistoryRequest } from "@/app/components/dashboard/useTokenHistory";
 
 const result: TokenHistoryResult = {
   cluster: "alpha",
@@ -79,5 +80,43 @@ describe("token history dashboard data", () => {
     expect(source).toContain("rpc.tokenHistory.get");
     expect(source).not.toContain("tokenHistory.stream");
     expect(source).not.toMatch(/https?:\/\/[^"'`]*cluster/);
+  });
+
+  it("keeps a shared request alive until its final card releases it", async () => {
+    const owner = new AbortController();
+    const otherCard = new AbortController();
+    let resolveRequest!: (value: TokenHistoryResult) => void;
+    let sharedSignal!: AbortSignal;
+    const requestFactory = vi.fn((signal: AbortSignal) => {
+      sharedSignal = signal;
+      const promise = new Promise<TokenHistoryResult>((resolve) => {
+        resolveRequest = resolve;
+        signal.addEventListener("abort", () => undefined, { once: true });
+      });
+      return promise;
+    });
+    const first = acquireTokenHistoryRequest("alpha\u000015m", owner, requestFactory);
+    const second = acquireTokenHistoryRequest("alpha\u000015m", otherCard, () => {
+      throw new Error("a deduplicated request must not create a second RPC call");
+    });
+
+    first.release();
+    owner.abort();
+    expect(sharedSignal.aborted).toBe(false);
+    expect(requestFactory).toHaveBeenCalledTimes(1);
+
+    resolveRequest(result);
+    await expect(second.promise).resolves.toBe(result);
+    second.release();
+    expect(sharedSignal.aborted).toBe(false);
+
+    const finalCard = new AbortController();
+    let pendingSignal!: AbortSignal;
+    const pending = acquireTokenHistoryRequest("alpha\u00001d", finalCard, (signal) => {
+      pendingSignal = signal;
+      return new Promise<TokenHistoryResult>(() => undefined);
+    });
+    pending.release();
+    expect(pendingSignal.aborted).toBe(true);
   });
 });

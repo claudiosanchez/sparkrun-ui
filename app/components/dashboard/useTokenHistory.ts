@@ -11,6 +11,66 @@ import {
 
 const historyCache = new Map<string, { result: TokenHistoryResult; fetchedAtMs: number }>();
 const inFlightHistory = new Map<string, Promise<TokenHistoryResult>>();
+const historyRequestOwners = new Map<
+  string,
+  { requestController: AbortController; consumers: number; promise: Promise<TokenHistoryResult> }
+>();
+
+export type TokenHistoryRequestHandle = {
+  promise: Promise<TokenHistoryResult>;
+  release: () => void;
+};
+
+function makeTokenHistoryRequestHandle(
+  key: string,
+  promise: Promise<TokenHistoryResult>,
+  controller: AbortController,
+): TokenHistoryRequestHandle {
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    controller.signal.removeEventListener("abort", release);
+    const owner = historyRequestOwners.get(key);
+    if (!owner || owner.promise !== promise) return;
+    owner.consumers -= 1;
+    if (owner.consumers > 0) return;
+    owner.requestController.abort();
+    historyRequestOwners.delete(key);
+    if (inFlightHistory.get(key) === promise) inFlightHistory.delete(key);
+  };
+  controller.signal.addEventListener("abort", release, { once: true });
+  return { promise, release };
+}
+
+export function acquireTokenHistoryRequest(
+  key: string,
+  controller: AbortController,
+  create: (signal: AbortSignal) => Promise<TokenHistoryResult>,
+): TokenHistoryRequestHandle {
+  const existing = inFlightHistory.get(key);
+  const existingOwner = historyRequestOwners.get(key);
+  if (existing !== undefined && existingOwner?.promise === existing) {
+    existingOwner.consumers += 1;
+    return makeTokenHistoryRequestHandle(key, existing, controller);
+  }
+
+  const requestController = new AbortController();
+  let promise: Promise<TokenHistoryResult>;
+  try {
+    promise = create(requestController.signal);
+  } catch (error) {
+    promise = Promise.reject(error);
+  }
+  inFlightHistory.set(key, promise);
+  historyRequestOwners.set(key, { requestController, consumers: 1, promise });
+  const cleanup = () => {
+    if (inFlightHistory.get(key) === promise) inFlightHistory.delete(key);
+    if (historyRequestOwners.get(key)?.promise === promise) historyRequestOwners.delete(key);
+  };
+  void promise.then(cleanup, cleanup);
+  return makeTokenHistoryRequestHandle(key, promise, controller);
+}
 
 export type TokenHistoryQueryState = {
   requestedRange: TrendRange;
@@ -58,7 +118,7 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
   useEffect(() => {
     const ac = new AbortController();
     const { signal } = ac;
-    let requestPromise: Promise<TokenHistoryResult> | undefined;
+    const requestHandles: TokenHistoryRequestHandle[] = [];
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
     const cached = historyCache.get(cacheKey);
@@ -90,22 +150,10 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
       if (signal.aborted) return;
 
       try {
-        const existing = inFlightHistory.get(cacheKey);
-        if (existing !== undefined) {
-          requestPromise = existing;
-        } else {
-          requestPromise = rpc.tokenHistory.get({ cluster, range }, { signal });
-          inFlightHistory.set(cacheKey, requestPromise);
-          const ownedRequest = requestPromise;
-          void ownedRequest.then(
-            () => {
-              if (inFlightHistory.get(cacheKey) === ownedRequest) inFlightHistory.delete(cacheKey);
-            },
-            () => {
-              if (inFlightHistory.get(cacheKey) === ownedRequest) inFlightHistory.delete(cacheKey);
-            },
-          );
-        }
+        const requestHandle = acquireTokenHistoryRequest(cacheKey, ac, (requestSignal) =>
+          rpc.tokenHistory.get({ cluster, range }, { signal: requestSignal }),
+        );
+        requestHandles.push(requestHandle);
 
         setState((previous) => ({
           ...previous,
@@ -115,7 +163,7 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
           error: null,
         }));
 
-        const next = await requestPromise;
+        const next = await requestHandle.promise;
         if (signal.aborted) return;
         historyCache.set(cacheKey, { result: next, fetchedAtMs: Date.now() });
         setState((previous) => ({
@@ -155,11 +203,9 @@ export function useTokenHistory(cluster: string, range: TrendRange): TokenHistor
     scheduleRefresh();
 
     return () => {
+      for (const requestHandle of requestHandles) requestHandle.release();
       ac.abort();
       if (refreshTimer !== undefined) clearTimeout(refreshTimer);
-      if (requestPromise !== undefined && inFlightHistory.get(cacheKey) === requestPromise) {
-        inFlightHistory.delete(cacheKey);
-      }
     };
   }, [cacheKey, cluster, range, retryNonce]);
 
