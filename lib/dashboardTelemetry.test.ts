@@ -129,6 +129,33 @@ describe("DashboardTelemetryEventSchema", () => {
 });
 
 describe("dashboard telemetry broker", () => {
+  it("evicts a stale cluster cache entry without dropping other cluster snapshots", async () => {
+    const broker = createDashboardTelemetryBroker();
+    const c032 = publishVllm(broker, "c032", 10);
+    const c458 = publishVllm(broker, "c458", 20);
+
+    (
+      broker as typeof broker & {
+        evict: (key: { topic: "vllm"; cluster: string }) => void;
+      }
+    ).evict({ topic: "vllm", cluster: "c032" });
+
+    const subscription = broker.subscribe();
+    await expect(subscription.next()).resolves.toEqual({ value: c458, done: false });
+
+    let nextReadSettled = false;
+    const nextRead = subscription.next().then((result) => {
+      nextReadSettled = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(nextReadSettled).toBe(false);
+
+    await subscription.return();
+    await expect(nextRead).resolves.toEqual({ value: undefined, done: true });
+    expect(c032.revision).toBe(1);
+  });
+
   it("replays and coalesces the newest token-history event per cluster", async () => {
     const broker = createDashboardTelemetryBroker();
     const queued = broker.subscribe();
@@ -271,7 +298,7 @@ describe("dashboard telemetry broker", () => {
     const secondSubscription = broker.subscribe();
     const first = await firstSubscription.next();
     const second = await secondSubscription.next();
-    if (!first.done && first.value.topic === "status") {
+    if (!first.done && first.value.topic === "status" && first.value.payload) {
       (first.value.payload.groups.reactor as { value: number }).value = 777;
     }
 

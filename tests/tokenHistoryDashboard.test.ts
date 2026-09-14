@@ -102,9 +102,9 @@ describe("token history dashboard data", () => {
     expect(source).not.toMatch(/https?:\/\/[^"'`]*cluster/);
   });
 
-  it("owns one reconnecting telemetry stream in the history provider outside the card map", () => {
+  it("owns one reconnecting dashboard telemetry stream outside the history-card map", () => {
     const providerSource = readFileSync(
-      new URL("../app/components/dashboard/TokenHistoryTelemetryProvider.tsx", import.meta.url),
+      new URL("../app/components/dashboard/DashboardTelemetryProvider.tsx", import.meta.url),
       "utf8",
     );
     const sectionSource = readFileSync(
@@ -124,10 +124,7 @@ describe("token history dashboard data", () => {
     expect(providerSource).not.toContain("tokenHistory.stream");
     expect(providerSource).not.toMatch(/https?:\/\/[^"'`]*cluster/);
     expect(cardSource).not.toContain("telemetry.stream");
-    expect(sectionSource.match(/<TokenHistoryTelemetryProvider>/g)).toHaveLength(1);
-    expect(sectionSource.indexOf("<TokenHistoryTelemetryProvider>")).toBeLessThan(
-      sectionSource.indexOf("clusters.map"),
-    );
+    expect(sectionSource).not.toContain("TelemetryProvider");
   });
 
   it("keeps the client telemetry store on the portable token-history schema boundary", () => {

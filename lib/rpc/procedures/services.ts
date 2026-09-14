@@ -1,6 +1,9 @@
 import { os } from "@orpc/server";
 import { z } from "zod";
 import { runSparkrunJson } from "@/lib/sparkrun";
+import { ServiceHealthSchema, type ServiceHealth } from "@/lib/serviceHealth";
+
+export { ServiceHealthSchema, type ServiceHealth } from "@/lib/serviceHealth";
 
 const SavedClusterSchema = z.object({
   name: z.string(),
@@ -13,14 +16,6 @@ function healthSignal(signal?: AbortSignal): AbortSignal {
   const timeout = AbortSignal.timeout(HEALTH_TIMEOUT_MS);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
-
-export const ServiceHealthSchema = z.object({
-  cluster: z.string(),
-  host: z.string().nullable(),
-  state: z.enum(["ready", "unavailable"]),
-  model: z.string().nullable(),
-});
-export type ServiceHealth = z.infer<typeof ServiceHealthSchema>;
 
 function unavailable(cluster: string, host: string | null): ServiceHealth {
   return { cluster, host, state: "unavailable", model: null };
@@ -57,6 +52,24 @@ export async function healthForCluster(
   const host = savedCluster?.hosts[0] ?? null;
   if (!host) return unavailable(cluster, null);
 
+  return healthForKnownHost(cluster, host, bounded);
+}
+
+/** Check a known saved host without performing another cluster-discovery request. */
+export async function healthForHost(
+  cluster: string,
+  host: string | null,
+  signal?: AbortSignal,
+): Promise<ServiceHealth> {
+  return healthForKnownHost(cluster, host, healthSignal(signal));
+}
+
+async function healthForKnownHost(
+  cluster: string,
+  host: string | null,
+  bounded: AbortSignal,
+): Promise<ServiceHealth> {
+  if (!host) return unavailable(cluster, null);
   try {
     const response = await fetch(`http://${host}:8000/v1/models`, {
       signal: bounded,

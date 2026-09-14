@@ -10,11 +10,13 @@ const StatusInputSchema = z
   })
   .optional();
 
-export async function fetchStatus(cluster?: string): Promise<ClusterStatus> {
+export async function fetchStatus(cluster?: string, signal?: AbortSignal): Promise<ClusterStatus> {
   const args = ["cluster", "status"];
   if (cluster) args.push("--cluster", cluster);
   args.push("--json");
-  const raw = await runSparkrunJson<unknown>(args);
+  const raw = signal
+    ? await runSparkrunJson<unknown>(args, { signal })
+    : await runSparkrunJson<unknown>(args);
   return ClusterStatusSchema.parse(raw);
 }
 
@@ -30,7 +32,7 @@ export const stream = os
     const interval = input?.intervalMs ?? 3000;
     while (!signal?.aborted) {
       try {
-        yield await fetchStatus(input?.cluster);
+        yield await fetchStatus(input?.cluster, signal);
       } catch (err) {
         console.error("[status.stream]", err);
       }
