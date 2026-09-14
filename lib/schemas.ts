@@ -87,8 +87,15 @@ export const ClusterEntrySchema = z.object({
   hosts: z.array(z.string()).default([]),
   description: z.string().optional(),
   is_default: z.boolean().default(false),
+  reactorCapacity: z
+    .object({
+      safeConcurrentRequests: z.number().int().positive(),
+      queueBudget: z.number().int().positive(),
+    })
+    .optional(),
 });
 export type ClusterEntry = z.infer<typeof ClusterEntrySchema>;
+export type ReactorCapacityPolicy = NonNullable<ClusterEntry["reactorCapacity"]>;
 
 export const ValidationIssueSchema = z.object({
   severity: z.enum(["error", "warning"]),

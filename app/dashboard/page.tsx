@@ -1,13 +1,18 @@
 import { serverClient } from "@/lib/rpc/server";
+import {
+  applyReactorCapacityPolicies,
+  loadReactorCapacityPolicies,
+} from "@/lib/reactorCapacityPolicy";
 import { resolveRunningRecipeDisplay, type RunningRecipeDisplay } from "@/lib/runningRecipes";
 import { DashboardLive } from "@/app/components/dashboard/DashboardLive";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [clusters, recipes] = await Promise.all([
+  const [clusters, recipes, policies] = await Promise.all([
     serverClient.clusters.list(),
     serverClient.recipes.list({ all: true }),
+    loadReactorCapacityPolicies(),
   ]);
   const statuses = await Promise.all(
     clusters.map((cluster) => serverClient.status.get({ cluster: cluster.name }).catch(() => null)),
@@ -22,7 +27,7 @@ export default async function DashboardPage() {
   }
   return (
     <DashboardLive
-      clusters={clusters}
+      clusters={applyReactorCapacityPolicies(clusters, policies)}
       initialStatuses={initialStatuses}
       recipeByCluster={recipeByCluster}
     />
