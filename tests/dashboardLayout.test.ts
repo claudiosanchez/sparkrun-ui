@@ -287,14 +287,58 @@ it("keeps a supplied model name out of the reactor center readout", () => {
   expect(html).toContain("Tokens / sec");
 });
 
-it("keeps the existing request facts below the rings", () => {
+it("keeps only vLLM request facts below the rings", () => {
   const html = renderToStaticMarkup(
     createElement(ReactorRings, { rings: semanticRings(), inference }),
   );
-  for (const label of ["Clients", "Sessions", "Running", "Queued"]) {
+  for (const label of ["Running", "Queued"]) {
     expect(html).toContain(label);
   }
-  expect(html).toContain("Client and session counts are not collected");
+  expect(html).not.toContain("Clients");
+  expect(html).not.toContain("Sessions");
+  expect(html).not.toContain("Client and session counts are not collected");
+  expect(html).not.toContain("KV cache occupancy is shown separately from host memory");
+});
+
+it("does not show a managed-workload badge in an individual reactor card", () => {
+  const cluster = { name: "lab", hosts: ["127.0.0.1"], is_default: true };
+  const state: ReactorState = {
+    name: "lab",
+    hostText: "127.0.0.1",
+    telemetryState: "live",
+    telemetryText: "Telemetry live",
+    freshnessText: "Host reachable · receiving measurements",
+    serviceState: "ready",
+    serviceText: "Model API ready",
+    modelText: "test-model",
+    managedWorkloadCount: 0,
+    managedWorkloadText: "0 managed workloads",
+    rings: semanticRings(),
+    inference,
+    trends: { cpu: [], gpu: [] },
+    metrics: {
+      cpuPercent: 12.5,
+      gpuPercent: 70,
+      gpuText: "70%",
+      cpuText: "12.5%",
+      memoryText: "64.0 / 128.0 GB",
+      gpuMemoryText: "—",
+      gpuTemperatureText: "62°C",
+      cpuTemperatureText: "55°C",
+      powerText: "42.5 W",
+    },
+  };
+  const useReactorState = vi.spyOn(ReactorStateContext, "useReactorState").mockReturnValue(state);
+
+  try {
+    const html = renderToStaticMarkup(createElement(ReactorCard, { cluster }));
+
+    expect(html).toContain("Telemetry live");
+    expect(html).toContain("Model API ready");
+    expect(html).not.toContain("0 managed workloads");
+  } finally {
+    useReactorState.mockRestore();
+  }
 });
 
 it("keeps GPU utilization in the ReactorCard hardware grid, not the rings", () => {
